@@ -107,8 +107,18 @@ def fetch_daybook(company_name: str, start: date, end: date, host: str, port: in
         return []
 
 
-def fetch_ledgers(company_name: str, host: str, port: int) -> List[Dict[str, str | float]]:
-    """Return ledger masters with parent, opening and closing balances."""
+def fetch_ledgers(
+    company_name: str,
+    host: str,
+    port: int,
+    start: date | None = None,
+    end: date | None = None,
+) -> List[Dict[str, str | float]]:
+    """Return ledger masters with parent, opening and closing balances.
+
+    When ``start`` and ``end`` are provided, opening balances are as of
+    ``start`` and closing balances as of ``end`` using Day Book movements.
+    """
 
     xml_basic = f"""
 <ENVELOPE>
@@ -155,9 +165,53 @@ def fetch_ledgers(company_name: str, host: str, port: int) -> List[Dict[str, str
     except ET.ParseError:
         return []
 
-    # Closing balances via Trial Balance (fast)
+    if start is None or end is None:
+        _populate_closing_from_trial_balance(company_name, host, port, ledgers)
+        return [
+            {
+                "Ledger Name": name,
+                **values,
+            }
+            for name, values in sorted(ledgers.items())
+        ]
+
+    fy_start = _financial_year_start(start)
+    vouchers = fetch_daybook(company_name, fy_start, end, host, port)
+
+    pre_start_delta: Dict[str, float] = {}
+    in_period_delta: Dict[str, float] = {}
+    for voucher in vouchers:
+        for entry in voucher.ledger_entries:
+            delta = entry.amount if entry.is_debit else -entry.amount
+            if voucher.date < start:
+                pre_start_delta[entry.ledger_name] = pre_start_delta.get(
+                    entry.ledger_name, 0.0
+                ) + delta
+            else:
+                in_period_delta[entry.ledger_name] = in_period_delta.get(
+                    entry.ledger_name, 0.0
+                ) + delta
+
+    for name, values in ledgers.items():
+        opening = values["Opening Balance"] + pre_start_delta.get(name, 0.0)
+        closing = opening + in_period_delta.get(name, 0.0)
+        values["Opening Balance"] = round(opening, 2)
+        values["Closing Balance"] = round(closing, 2)
+
+    return [
+        {
+            "Ledger Name": name,
+            **values,
+        }
+        for name, values in sorted(ledgers.items())
+    ]
+
+
+def _populate_closing_from_trial_balance(
+    company_name: str, host: str, port: int, ledgers: Dict[str, Dict[str, str | float]]
+) -> None:
     today = date.today().strftime("%Y%m%d")
-    fy_start = f"{date.today().year - 1}0401"
+    fy_start = _financial_year_start(date.today()).strftime("%Y%m%d")
     xml_tb = f"""
 <ENVELOPE>
   <HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER>
@@ -186,15 +240,14 @@ def fetch_ledgers(company_name: str, host: str, port: int) -> List[Dict[str, str
                     ledger.findtext("CLOSINGBALANCE", "0")
                 )
     except ET.ParseError:
-        pass
+        return
 
-    return [
-        {
-            "Ledger Name": name,
-            **values,
-        }
-        for name, values in sorted(ledgers.items())
-    ]
+
+def _financial_year_start(anchor: date) -> date:
+    year = anchor.year
+    if anchor.month < 4:
+        year -= 1
+    return date(year, 4, 1)
 
 
 def _parse_daybook(raw: str) -> Iterable[Voucher]:
