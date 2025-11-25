@@ -264,35 +264,47 @@ def _parse_daybook(raw: str) -> Iterable[Voucher]:
         narration = (voucher.findtext("NARRATION", "") or "").strip()
         vnumber = (voucher.findtext("VOUCHERNUMBER", "") or "").strip() or None
         entries: List[LedgerEntry] = []
-        for entry in voucher.findall(".//ALLLEDGERENTRIES.LIST"):
-            ledger = entry.findtext("LEDGERNAME", "")
-            amount_raw = _to_float(entry.findtext("AMOUNT", "0"))
-            deemed_text = (entry.findtext("ISDEEMEDPOSITIVE", "") or "").strip().lower()
-            amount_abs = abs(amount_raw)
+        entry_tags = [
+            "ALLLEDGERENTRIES.LIST",
+            "LEDGERENTRIES.LIST",
+            "ALLINVENTORYENTRIES.LIST",
+            "INVENTORYENTRIES.LIST",
+        ]
 
-            # Prefer the raw amount sign for Dr/Cr; fall back to the deemed flag
-            # only when the amount is zero (some exports flip the sign for cr).
-            if amount_raw > 0:
-                is_debit = True
-            elif amount_raw < 0:
-                is_debit = False
-            elif deemed_text in ("no", "n", "false"):
-                is_debit = True
-            elif deemed_text in ("yes", "y", "true"):
-                is_debit = False
-            else:
-                continue
-
-            if amount_abs == 0:
-                continue
-
-            entries.append(
-                LedgerEntry(
-                    ledger_name=ledger,
-                    amount=amount_abs,
-                    is_debit=is_debit,
+        for tag in entry_tags:
+            for entry in voucher.findall(f".//{tag}"):
+                ledger = (
+                    entry.findtext("LEDGERNAME", "")
+                    or entry.findtext("STOCKITEMNAME", "")
+                    or "(Unknown Ledger)"
                 )
-            )
+                amount_raw = _to_float(entry.findtext("AMOUNT", "0"))
+                deemed_text = (entry.findtext("ISDEEMEDPOSITIVE", "") or "").strip().lower()
+                amount_abs = abs(amount_raw)
+
+                # Prefer the raw amount sign for Dr/Cr; fall back to the deemed flag
+                # only when the amount is zero (some exports flip the sign for cr).
+                if amount_raw > 0:
+                    is_debit = True
+                elif amount_raw < 0:
+                    is_debit = False
+                elif deemed_text in ("no", "n", "false"):
+                    is_debit = True
+                elif deemed_text in ("yes", "y", "true"):
+                    is_debit = False
+                else:
+                    continue
+
+                if amount_abs == 0:
+                    continue
+
+                entries.append(
+                    LedgerEntry(
+                        ledger_name=ledger,
+                        amount=amount_abs,
+                        is_debit=is_debit,
+                    )
+                )
         if entries:
             yield Voucher(
                 voucher_type=vtype,
