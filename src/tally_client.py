@@ -29,6 +29,7 @@ class Voucher:
     date: date
     ledger_entries: List[LedgerEntry]
     narration: str = ""
+    voucher_number: str | None = None
 
 
 __all__ = [
@@ -261,22 +262,26 @@ def _parse_daybook(raw: str) -> Iterable[Voucher]:
         vdate = date.fromisoformat(f"{vdate_text[:4]}-{vdate_text[4:6]}-{vdate_text[6:]}")
         vtype = voucher.findtext("VOUCHERTYPENAME", "")
         narration = (voucher.findtext("NARRATION", "") or "").strip()
+        vnumber = (voucher.findtext("VOUCHERNUMBER", "") or "").strip() or None
         entries: List[LedgerEntry] = []
         for entry in voucher.findall(".//ALLLEDGERENTRIES.LIST"):
             ledger = entry.findtext("LEDGERNAME", "")
             amount_raw = _to_float(entry.findtext("AMOUNT", "0"))
             deemed_text = (entry.findtext("ISDEEMEDPOSITIVE", "") or "").strip().lower()
 
-            # Build the signed amount using Tally's Dr/Cr flag first, then fall
-            # back to the sign that comes through in AMOUNT. This keeps Dr
-            # entries positive and Cr entries negative so the nett across a
-            # voucher sums to zero just like Tally's Day Book.
-            if deemed_text in ("yes", "y", "true"):
-                signed_amount = -abs(amount_raw)  # Credit
+            # Prioritise the sign that arrives in AMOUNT because that mirrors
+            # the Dr/Cr seen inside Tally. Only when AMOUNT is zero do we fall
+            # back to the ISDEEMEDPOSITIVE flag for direction.
+            if amount_raw > 0:
+                signed_amount = abs(amount_raw)
+            elif amount_raw < 0:
+                signed_amount = -abs(amount_raw)
+            elif deemed_text in ("yes", "y", "true"):
+                signed_amount = -abs(amount_raw)
             elif deemed_text in ("no", "n", "false"):
-                signed_amount = abs(amount_raw)  # Debit
+                signed_amount = abs(amount_raw)
             else:
-                signed_amount = amount_raw  # Use whatever sign was provided
+                signed_amount = 0
 
             if signed_amount == 0:
                 continue
@@ -288,7 +293,14 @@ def _parse_daybook(raw: str) -> Iterable[Voucher]:
                     is_debit=signed_amount > 0,
                 )
             )
-        yield Voucher(voucher_type=vtype, date=vdate, ledger_entries=entries, narration=narration)
+        if entries:
+            yield Voucher(
+                voucher_type=vtype,
+                date=vdate,
+                ledger_entries=entries,
+                narration=narration,
+                voucher_number=vnumber,
+            )
 
 
 def _to_float(value: str | None) -> float:

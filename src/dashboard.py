@@ -158,6 +158,7 @@ def _voucher_dataframe(vouchers):
             rows.append(
                 {
                     "Date": voucher.date,
+                    "Voucher No": voucher.voucher_number,
                     "Voucher Type": voucher.voucher_type,
                     "Ledger": entry.ledger_name,
                     "Debit": entry.amount if entry.is_debit else 0,
