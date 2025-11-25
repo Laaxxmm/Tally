@@ -273,29 +273,31 @@ def _parse_daybook(raw: str) -> Iterable[Voucher]:
             ledger = entry.findtext("LEDGERNAME", "")
             amount_raw = _to_float(entry.findtext("AMOUNT", "0"))
             deemed_text = (entry.findtext("ISDEEMEDPOSITIVE", "") or "").strip().lower()
+            amount_abs = abs(amount_raw)
 
-            # Prioritise the sign that arrives in AMOUNT because that mirrors
-            # the Dr/Cr seen inside Tally. Only when AMOUNT is zero do we fall
-            # back to the ISDEEMEDPOSITIVE flag for direction.
-            if amount_raw > 0:
-                signed_amount = abs(amount_raw)
-            elif amount_raw < 0:
-                signed_amount = -abs(amount_raw)
-            elif deemed_text in ("yes", "y", "true"):
-                signed_amount = -abs(amount_raw)
+            # In Tally exports, ISDEEMEDPOSITIVE is authoritative for Dr/Cr:
+            #   - "No"  => Debit
+            #   - "Yes" => Credit
+            # Fall back to the amount sign only when the flag is missing.
+            if deemed_text in ("yes", "y", "true"):
+                is_debit = False
             elif deemed_text in ("no", "n", "false"):
-                signed_amount = abs(amount_raw)
+                is_debit = True
+            elif amount_raw < 0:
+                is_debit = False
+            elif amount_raw > 0:
+                is_debit = True
             else:
-                signed_amount = 0
+                continue
 
-            if signed_amount == 0:
+            if amount_abs == 0:
                 continue
 
             entries.append(
                 LedgerEntry(
                     ledger_name=ledger,
-                    amount=abs(signed_amount),
-                    is_debit=signed_amount > 0,
+                    amount=amount_abs,
+                    is_debit=is_debit,
                 )
             )
         if entries:
