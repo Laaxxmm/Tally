@@ -260,7 +260,12 @@ def _parse_daybook(raw: str) -> Iterable[Voucher]:
         if len(vdate_text) != 8:
             continue
         vdate = date.fromisoformat(f"{vdate_text[:4]}-{vdate_text[4:6]}-{vdate_text[6:]}")
-        vtype = voucher.findtext("VOUCHERTYPENAME", "")
+        vtype = (
+            voucher.findtext("VOUCHERTYPENAME", "")
+            or voucher.get("VCHTYPE", "")
+            or voucher.findtext("VCHTYPE", "")
+            or voucher.get("VOUCHERTYPE", "")
+        ).strip() or "(Unknown)"
         narration = (voucher.findtext("NARRATION", "") or "").strip()
         vnumber = (voucher.findtext("VOUCHERNUMBER", "") or "").strip() or None
         entries: List[LedgerEntry] = []
