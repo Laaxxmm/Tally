@@ -350,10 +350,18 @@ def _extract_voucher_type(voucher: ET.Element) -> str:
         voucher.findtext("BASICVCHTYPE"),
     ]
 
-    # BASICVCHTYPE can appear inside a list node; capture the first non-empty.
+    # BASICVCHTYPE can appear inside list nodes (e.g., BASICVCHTYPE.LIST).
     list_basic = voucher.find(".//BASICVCHTYPE")
     if list_basic is not None:
         candidates.append(list_basic.text)
+
+    # Some exports tuck the type into deeper nodes (including unexpected future
+    # voucher types). Sweep every descendant tag that contains "VCHTYPE" or
+    # "VOUCHERTYPE" to avoid missing Purchase/Sales or custom types.
+    for elem in voucher.iter():
+        tag_upper = elem.tag.upper()
+        if "VCHTYPE" in tag_upper or "VOUCHERTYPE" in tag_upper:
+            candidates.append(elem.text)
 
     for candidate in candidates:
         cleaned = _clean(candidate)
