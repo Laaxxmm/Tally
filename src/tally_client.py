@@ -260,12 +260,7 @@ def _parse_daybook(raw: str) -> Iterable[Voucher]:
         if len(vdate_text) != 8:
             continue
         vdate = date.fromisoformat(f"{vdate_text[:4]}-{vdate_text[4:6]}-{vdate_text[6:]}")
-        vtype = (
-            voucher.findtext("VOUCHERTYPENAME", "")
-            or voucher.get("VCHTYPE", "")
-            or voucher.findtext("VCHTYPE", "")
-            or voucher.get("VOUCHERTYPE", "")
-        ).strip() or "(Unknown)"
+        vtype = _extract_voucher_type(voucher)
         narration = (voucher.findtext("NARRATION", "") or "").strip()
         vnumber = (voucher.findtext("VOUCHERNUMBER", "") or "").strip() or None
         entries: List[LedgerEntry] = []
@@ -307,7 +302,7 @@ def _parse_daybook(raw: str) -> Iterable[Voucher]:
                 ledger_entries=entries,
                 narration=narration,
                 voucher_number=vnumber,
-            )
+        )
 
 
 def _to_float(value: str | None) -> float:
@@ -333,4 +328,37 @@ def _to_float(value: str | None) -> float:
         else:
             value_flt = abs(value_flt)
     return value_flt
+
+
+def _extract_voucher_type(voucher: ET.Element) -> str:
+    """Return the most descriptive voucher type available.
+
+    Tally can surface voucher types in multiple places depending on export and
+    template. We scan attributes plus common fields (including BASICVCHTYPE)
+    so future voucher categories like Purchase/Sales are never dropped.
+    """
+
+    def _clean(text: str | None) -> str:
+        return (text or "").strip()
+
+    candidates = [
+        voucher.get("VCHTYPE"),
+        voucher.get("VOUCHERTYPE"),
+        voucher.findtext("VOUCHERTYPENAME"),
+        voucher.findtext("VCHTYPE"),
+        voucher.findtext("VOUCHERTYPE"),
+        voucher.findtext("BASICVCHTYPE"),
+    ]
+
+    # BASICVCHTYPE can appear inside a list node; capture the first non-empty.
+    list_basic = voucher.find(".//BASICVCHTYPE")
+    if list_basic is not None:
+        candidates.append(list_basic.text)
+
+    for candidate in candidates:
+        cleaned = _clean(candidate)
+        if cleaned:
+            return cleaned
+
+    return "(Unknown)"
 
