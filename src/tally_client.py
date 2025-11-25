@@ -153,7 +153,7 @@ def fetch_ledgers(
             name = (ledger.get("NAME") or "").strip()
             if not name:
                 continue
-            parent = ledger.findtext("PARENT", default="").strip()
+            parent = (ledger.findtext("PARENT", default="") or ledger.get("PARENT", "")).strip()
             opening = _to_float(ledger.findtext("OPENINGBALANCE", "0"))
             billwise = ledger.findtext("ISBILLWISEON", "No")
             ledgers[name] = {
@@ -264,15 +264,24 @@ def _parse_daybook(raw: str) -> Iterable[Voucher]:
         entries: List[LedgerEntry] = []
         for entry in voucher.findall(".//ALLLEDGERENTRIES.LIST"):
             ledger = entry.findtext("LEDGERNAME", "")
-            amount = _to_float(entry.findtext("AMOUNT", "0"))
-            # In Day Book exports, ISDEEMEDPOSITIVE="Yes" marks debit lines and
-            # amounts may already carry a negative sign. Always use the flag to
-            # decide the side and strip the sign from the numeric amount.
-            is_debit = entry.findtext("ISDEEMEDPOSITIVE", "No") == "Yes"
+            amount_raw = _to_float(entry.findtext("AMOUNT", "0"))
+            is_deemed_positive = entry.findtext("ISDEEMEDPOSITIVE", "No") == "Yes"
+
+            # Prefer the explicit Dr/Cr split from Tally: positive amounts are
+            # debit, negative amounts are credit. When the amount is zero or not
+            # signed, fall back to ISDEEMEDPOSITIVE where "Yes" represents
+            # credit and "No" represents debit as per Tally docs.
+            if amount_raw > 0:
+                is_debit = True
+            elif amount_raw < 0:
+                is_debit = False
+            else:
+                is_debit = not is_deemed_positive
+
             entries.append(
                 LedgerEntry(
                     ledger_name=ledger,
-                    amount=abs(amount),
+                    amount=abs(amount_raw),
                     is_debit=is_debit,
                 )
             )
@@ -280,9 +289,26 @@ def _parse_daybook(raw: str) -> Iterable[Voucher]:
 
 
 def _to_float(value: str | None) -> float:
+    cleaned = (value or "0").replace(",", "").strip()
+    if not cleaned or cleaned == "-":
+        return 0.0
+
+    # Handle strings like "12345 Cr" / "12345 Dr" where Dr is positive and Cr
+    # is negative, matching common Tally exports for opening/closing balances.
+    match = re.match(r"(-?\d*\.?\d+)(?:\s*(Dr|Cr))?", cleaned, flags=re.IGNORECASE)
+    if not match:
+        return 0.0
+
+    number_part, drcr = match.groups()
     try:
-        cleaned = (value or "0").replace(",", "").strip()
-        return float(cleaned) if cleaned and cleaned != "-" else 0.0
+        value_flt = float(number_part)
     except ValueError:
         return 0.0
+
+    if drcr:
+        if drcr.lower() == "cr":
+            value_flt = -abs(value_flt)
+        else:
+            value_flt = abs(value_flt)
+    return value_flt
 
