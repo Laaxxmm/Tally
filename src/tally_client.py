@@ -263,9 +263,10 @@ def _parse_daybook(raw: str) -> Iterable[Voucher]:
         for entry in voucher.findall(".//ALLLEDGERENTRIES.LIST"):
             ledger = entry.findtext("LEDGERNAME", "")
             amount = _to_float(entry.findtext("AMOUNT", "0"))
-            deemed_positive = entry.findtext("ISDEEMEDPOSITIVE", "No") == "Yes"
-            # In Day Book exports, positive amounts with ISDEEMEDPOSITIVE=Yes are credits
-            is_debit = not deemed_positive
+            # In Day Book exports, ISDEEMEDPOSITIVE="Yes" marks debit lines and
+            # amounts may already carry a negative sign. Always use the flag to
+            # decide the side and strip the sign from the numeric amount.
+            is_debit = entry.findtext("ISDEEMEDPOSITIVE", "No") == "Yes"
             entries.append(
                 LedgerEntry(
                     ledger_name=ledger,
