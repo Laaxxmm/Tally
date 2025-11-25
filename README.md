@@ -18,7 +18,7 @@ A lightweight Streamlit dashboard that connects to a running Tally instance (via
    ```bash
    streamlit run src/dashboard.py
    ```
-4. Use the sidebar to enter host/port (defaults to `127.0.0.1:9000`) and select the date range. Click **Load from Tally** to fetch live data.
+4. Use the sidebar to enter host/port (defaults to `127.0.0.1:9000`), click **Connect to Tally** to load companies, choose the company, set your date range, and click **Load from Tally** to fetch live data.
 
 ## Module overview
 - `src/tally_client.py`: Minimal HTTP XML client for fetching Day Book vouchers and parsing them into structured objects.

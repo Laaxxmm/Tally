@@ -1,26 +1,23 @@
-"""Utilities for pulling financial data from Tally over the HTTP XML interface.
+"""Robust helpers for connecting to Tally over the HTTP XML interface.
 
-This module focuses on three capabilities:
-- Establishing a connection to a running Tally instance (127.0.0.1:9000 by default).
-- Requesting Day Book entries for a date range.
-- Converting the XML responses into structured Python dictionaries that are easy to aggregate.
-
-The client intentionally uses only the Python standard library so it can run anywhere
-without extra dependencies.
+The functions here mirror the working reference script shared by the user:
+they clean malformed XML, post requests to 127.0.0.1:9000, and parse Day Book
+and ledger responses into friendly Python structures that downstream analytics
+can consume.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
-from typing import Iterable, List
-import http.client
+from typing import Dict, Iterable, List
+import re
 import xml.etree.ElementTree as ET
+
+import requests
 
 
 @dataclass
 class LedgerEntry:
-    """Represents a ledger line extracted from a Day Book voucher."""
-
     ledger_name: str
     amount: float
     is_debit: bool
@@ -28,105 +25,195 @@ class LedgerEntry:
 
 @dataclass
 class Voucher:
-    """Represents a voucher extracted from a Day Book response."""
-
     voucher_type: str
     date: date
     ledger_entries: List[LedgerEntry]
-
-    @property
-    def total(self) -> float:
-        return sum(entry.amount if entry.is_debit else -entry.amount for entry in self.ledger_entries)
+    narration: str = ""
 
 
-class TallyClient:
-    """Minimal XML client for communicating with a running Tally instance."""
-
-    def __init__(self, host: str = "127.0.0.1", port: int = 9000) -> None:
-        self.host = host
-        self.port = port
-
-    def _post_xml(self, xml_body: str) -> str:
-        connection = http.client.HTTPConnection(self.host, self.port, timeout=10)
-        headers = {"Content-type": "text/xml"}
-        connection.request("POST", "/", body=xml_body.encode("utf-8"), headers=headers)
-        response = connection.getresponse()
-        payload = response.read().decode("utf-8")
-        connection.close()
-        if response.status != 200:
-            raise RuntimeError(f"Tally responded with HTTP {response.status}: {payload}")
-        return payload
-
-    def fetch_daybook(self, start: date, end: date) -> List[Voucher]:
-        """Fetch Day Book vouchers between two dates (inclusive)."""
-
-        # Tally uses dd-mm-yyyy format in XML requests.
-        start_str = start.strftime("%d-%m-%Y")
-        end_str = end.strftime("%d-%m-%Y")
-
-        request_xml = f"""
-            <ENVELOPE>
-                <HEADER>
-                    <VERSION>1</VERSION>
-                    <TALLYREQUEST>Export Data</TALLYREQUEST>
-                    <TYPE>Data</TYPE>
-                    <ID>Day Book</ID>
-                </HEADER>
-                <BODY>
-                    <DESC>
-                        <STATICVARIABLES>
-                            <SVFROMDATE>{start_str}</SVFROMDATE>
-                            <SVTODATE>{end_str}</SVTODATE>
-                        </STATICVARIABLES>
-                        <TDL>
-                            <TDLMESSAGE>
-                                <REPORT NAME="Day Book">
-                                    <FORMS>Day Book</FORMS>
-                                </REPORT>
-                                <FORM NAME="Day Book">
-                                    <TOPPARTS>DBPart</TOPPARTS>
-                                    <XMLTAG>DayBook</XMLTAG>
-                                </FORM>
-                                <PART NAME="DBPart">
-                                    <LINES>DBLine</LINES>
-                                </PART>
-                                <LINE NAME="DBLine">
-                                    <LEFTFIELDS>VoucherTypeName,Date,LedgerEntries</LEFTFIELDS>
-                                </LINE>
-                            </TDLMESSAGE>
-                        </TDL>
-                    </DESC>
-                </BODY>
-            </ENVELOPE>
-        """
-
-        response_xml = self._post_xml(request_xml)
-        return list(_parse_daybook_response(response_xml))
+def _clean_tally_xml(resp: str | None) -> str:
+    if not resp:
+        return ""
+    resp = resp.replace("&", "&amp;")
+    return re.sub(r"[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]", "", resp)
 
 
-def _parse_daybook_response(response_xml: str) -> Iterable[Voucher]:
-    """Parse the minimal Day Book XML produced by Tally."""
+def _post_xml(xml: str, host: str, port: int) -> str:
+    url = f"http://{host}:{port}"
+    headers = {"Content-Type": "text/xml; charset=utf-8"}
+    response = requests.post(url, headers=headers, data=xml, timeout=90)
+    response.raise_for_status()
+    return response.text
 
-    root = ET.fromstring(response_xml)
-    for voucher_element in root.iterfind(".//VOUCHER"):
-        voucher_type = voucher_element.get("VCHTYPE", "")
-        date_text = voucher_element.findtext("DATE", default="")
-        ledger_entries = []
 
-        for ledger_element in voucher_element.findall("ALLLEDGERENTRIES.LIST"):
-            ledger_name = ledger_element.findtext("LEDGERNAME", default="")
-            amount_text = ledger_element.findtext("AMOUNT", default="0")
-            is_debit = ledger_element.findtext("ISDEEMEDPOSITIVE", default="No") == "No"
-            ledger_entries.append(
+def fetch_companies(host: str, port: int) -> List[str]:
+    xml = """
+<ENVELOPE>
+  <HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>List of Companies</ID></HEADER>
+  <BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT></STATICVARIABLES></DESC></BODY>
+</ENVELOPE>
+"""
+    raw = _clean_tally_xml(_post_xml(xml, host, port))
+    if not raw:
+        return []
+    try:
+        root = ET.fromstring(raw)
+        return sorted({c.get("NAME") for c in root.findall(".//COMPANY") if c.get("NAME")})
+    except ET.ParseError:
+        return []
+
+
+def fetch_daybook(company_name: str, start: date, end: date, host: str, port: int) -> List[Voucher]:
+    from_str = start.strftime("%Y%m%d")
+    to_str = end.strftime("%Y%m%d")
+    xml = f"""
+<ENVELOPE>
+<HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER>
+<BODY>
+  <EXPORTDATA>
+    <REQUESTDESC>
+      <REPORTNAME>Voucher Register</REPORTNAME>
+      <STATICVARIABLES>
+        <SVCURRENTCOMPANY>{company_name}</SVCURRENTCOMPANY>
+        <SVFROMDATE>{from_str}</SVFROMDATE>
+        <SVTODATE>{to_str}</SVTODATE>
+        <EXPLODEFLAG>Yes</EXPLODEFLAG>
+        <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+      </STATICVARIABLES>
+    </REQUESTDESC>
+  </EXPORTDATA>
+</BODY>
+</ENVELOPE>
+"""
+    raw = _clean_tally_xml(_post_xml(xml, host, port))
+    if not raw:
+        return []
+    try:
+        return list(_parse_daybook(raw))
+    except ET.ParseError:
+        return []
+
+
+def fetch_ledgers(company_name: str, host: str, port: int) -> List[Dict[str, str | float]]:
+    """Return ledger masters with parent, opening and closing balances."""
+
+    xml_basic = f"""
+<ENVELOPE>
+  <HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>List of Ledgers</ID></HEADER>
+  <BODY>
+    <DESC>
+      <STATICVARIABLES>
+        <SVCURRENTCOMPANY>{company_name}</SVCURRENTCOMPANY>
+        <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+      </STATICVARIABLES>
+      <TDL>
+        <TDLMESSAGE>
+          <COLLECTION NAME="List of Ledgers" ISMODIFY="No">
+            <TYPE>Ledger</TYPE>
+            <BELONGSTO>Yes</BELONGSTO>
+            <FETCH>Name</FETCH>
+            <FETCH>Parent</FETCH>
+            <FETCH>OpeningBalance</FETCH>
+            <FETCH>IsBillWiseOn</FETCH>
+          </COLLECTION>
+        </TDLMESSAGE>
+      </TDL>
+    </DESC>
+  </BODY>
+</ENVELOPE>
+"""
+    raw_basic = _clean_tally_xml(_post_xml(xml_basic, host, port))
+    ledgers: Dict[str, Dict[str, str | float]] = {}
+    try:
+        root_basic = ET.fromstring(raw_basic)
+        for ledger in root_basic.findall(".//LEDGER"):
+            name = (ledger.get("NAME") or "").strip()
+            if not name:
+                continue
+            parent = ledger.findtext("PARENT", default="").strip()
+            opening = _to_float(ledger.findtext("OPENINGBALANCE", "0"))
+            billwise = ledger.findtext("ISBILLWISEON", "No")
+            ledgers[name] = {
+                "Parent": parent,
+                "Opening Balance": opening,
+                "Billwise": billwise,
+                "Closing Balance": 0.0,
+            }
+    except ET.ParseError:
+        return []
+
+    # Closing balances via Trial Balance (fast)
+    today = date.today().strftime("%Y%m%d")
+    fy_start = f"{date.today().year - 1}0401"
+    xml_tb = f"""
+<ENVELOPE>
+  <HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER>
+  <BODY>
+    <EXPORTDATA>
+      <REQUESTDESC>
+        <REPORTNAME>Trial Balance</REPORTNAME>
+        <STATICVARIABLES>
+          <SVCURRENTCOMPANY>{company_name}</SVCURRENTCOMPANY>
+          <SVFROMDATE>{fy_start}</SVFROMDATE>
+          <SVTODATE>{today}</SVTODATE>
+          <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+        </STATICVARIABLES>
+      </REQUESTDESC>
+    </EXPORTDATA>
+  </BODY>
+</ENVELOPE>
+"""
+    raw_tb = _clean_tally_xml(_post_xml(xml_tb, host, port))
+    try:
+        root_tb = ET.fromstring(raw_tb)
+        for ledger in root_tb.findall(".//LEDGER"):
+            name = (ledger.findtext("NAME", "") or "").strip()
+            if name in ledgers:
+                ledgers[name]["Closing Balance"] = _to_float(
+                    ledger.findtext("CLOSINGBALANCE", "0")
+                )
+    except ET.ParseError:
+        pass
+
+    return [
+        {
+            "Ledger Name": name,
+            **values,
+        }
+        for name, values in sorted(ledgers.items())
+    ]
+
+
+def _parse_daybook(raw: str) -> Iterable[Voucher]:
+    root = ET.fromstring(raw)
+    for voucher in root.findall(".//VOUCHER"):
+        vdate_text = voucher.findtext("DATE", "")
+        if len(vdate_text) != 8:
+            continue
+        vdate = date.fromisoformat(f"{vdate_text[:4]}-{vdate_text[4:6]}-{vdate_text[6:]}")
+        vtype = voucher.findtext("VOUCHERTYPENAME", "")
+        narration = (voucher.findtext("NARRATION", "") or "").strip()
+        entries: List[LedgerEntry] = []
+        for entry in voucher.findall(".//ALLLEDGERENTRIES.LIST"):
+            ledger = entry.findtext("LEDGERNAME", "")
+            amount = _to_float(entry.findtext("AMOUNT", "0"))
+            deemed_positive = entry.findtext("ISDEEMEDPOSITIVE", "No") == "Yes"
+            # In Day Book exports, positive amounts with ISDEEMEDPOSITIVE=Yes are credits
+            is_debit = not deemed_positive
+            entries.append(
                 LedgerEntry(
-                    ledger_name=ledger_name,
-                    amount=abs(float(amount_text)),
+                    ledger_name=ledger,
+                    amount=abs(amount),
                     is_debit=is_debit,
                 )
             )
+        yield Voucher(voucher_type=vtype, date=vdate, ledger_entries=entries, narration=narration)
 
-        voucher_date = date.fromisoformat(
-            f"{date_text[:4]}-{date_text[4:6]}-{date_text[6:]}"
-        ) if date_text else date.today()
-        yield Voucher(voucher_type=voucher_type, date=voucher_date, ledger_entries=ledger_entries)
+
+def _to_float(value: str | None) -> float:
+    try:
+        cleaned = (value or "0").replace(",", "").strip()
+        return float(cleaned) if cleaned and cleaned != "-" else 0.0
+    except ValueError:
+        return 0.0
 

@@ -8,7 +8,7 @@ import pandas as pd
 import streamlit as st
 
 from analytics import summarize
-from tally_client import TallyClient
+from tally_client import fetch_companies, fetch_daybook
 
 
 st.set_page_config(page_title="Tally MIS Dashboard", layout="wide")
@@ -17,9 +17,13 @@ st.caption("Connects to Tally over 127.0.0.1:9000 to present client-ready KPIs."
 
 
 @st.cache_data(show_spinner=False)
-def _load_data(start: date, end: date, host: str, port: int):
-    client = TallyClient(host=host, port=port)
-    return client.fetch_daybook(start, end)
+def _load_companies(host: str, port: int):
+    return fetch_companies(host, port)
+
+
+@st.cache_data(show_spinner=False)
+def _load_data(company: str, start: date, end: date, host: str, port: int):
+    return fetch_daybook(company, start, end, host, port)
 
 
 def _render_kpi(label: str, value: float, delta: float | None = None):
@@ -35,6 +39,21 @@ def main() -> None:
     host = st.sidebar.text_input("Host", value="127.0.0.1")
     port = st.sidebar.number_input("Port", value=9000, step=1)
 
+    companies: list[str] = st.session_state.get("companies", [])
+
+    if st.sidebar.button("Connect to Tally", type="primary"):
+        with st.spinner("Discovering companies..."):
+            companies = _load_companies(host, int(port))
+            if companies:
+                st.session_state.companies = companies
+                st.sidebar.success(f"Connected · {len(companies)} companies found")
+            else:
+                st.sidebar.error("No companies returned. Make sure Tally is open and ODBC/HTTP is enabled.")
+
+    company = None
+    if companies:
+        company = st.sidebar.selectbox("Company", companies)
+
     st.sidebar.header("Date Range")
     today = date.today()
     default_start = today - timedelta(days=30)
@@ -45,14 +64,16 @@ def main() -> None:
         st.sidebar.error("Start date must be before end date")
         st.stop()
 
-    if st.sidebar.button("Load from Tally"):
-        with st.spinner("Loading Day Book from Tally..."):
-            vouchers = _load_data(start_date, end_date, host, int(port))
-    else:
-        st.info("Click 'Load from Tally' to fetch live data. Showing sample data below.")
-        vouchers = []
+    vouchers = []
+    if company and st.sidebar.button("Load from Tally", type="primary"):
+        with st.spinner(f"Loading Day Book for {company}..."):
+            try:
+                vouchers = _load_data(company, start_date, end_date, host, int(port))
+            except Exception as exc:  # requests or parsing failures
+                st.error(f"Tally connection failed: {exc}")
 
     if not vouchers:
+        st.info("Showing sample data. Use the sidebar to connect and load live vouchers from Tally.")
         vouchers = _sample_vouchers()
 
     ledger_map = _default_ledger_map()
