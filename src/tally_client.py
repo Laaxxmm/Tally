@@ -270,18 +270,16 @@ def _parse_daybook(raw: str) -> Iterable[Voucher]:
             deemed_text = (entry.findtext("ISDEEMEDPOSITIVE", "") or "").strip().lower()
             amount_abs = abs(amount_raw)
 
-            # In Tally exports, ISDEEMEDPOSITIVE is authoritative for Dr/Cr:
-            #   - "No"  => Debit
-            #   - "Yes" => Credit
-            # Fall back to the amount sign only when the flag is missing.
-            if deemed_text in ("yes", "y", "true"):
-                is_debit = False
-            elif deemed_text in ("no", "n", "false"):
+            # Prefer the raw amount sign for Dr/Cr; fall back to the deemed flag
+            # only when the amount is zero (some exports flip the sign for cr).
+            if amount_raw > 0:
                 is_debit = True
             elif amount_raw < 0:
                 is_debit = False
-            elif amount_raw > 0:
+            elif deemed_text in ("no", "n", "false"):
                 is_debit = True
+            elif deemed_text in ("yes", "y", "true"):
+                is_debit = False
             else:
                 continue
 
@@ -331,12 +329,7 @@ def _to_float(value: str | None) -> float:
 
 
 def _extract_voucher_type(voucher: ET.Element) -> str:
-    """Return the most descriptive voucher type available.
-
-    Tally can surface voucher types in multiple places depending on export and
-    template. We scan attributes plus common fields (including BASICVCHTYPE)
-    so future voucher categories like Purchase/Sales are never dropped.
-    """
+    """Return a voucher type using common fields plus attributes."""
 
     def _clean(text: str | None) -> str:
         return (text or "").strip()
@@ -349,19 +342,6 @@ def _extract_voucher_type(voucher: ET.Element) -> str:
         voucher.findtext("VOUCHERTYPE"),
         voucher.findtext("BASICVCHTYPE"),
     ]
-
-    # BASICVCHTYPE can appear inside list nodes (e.g., BASICVCHTYPE.LIST).
-    list_basic = voucher.find(".//BASICVCHTYPE")
-    if list_basic is not None:
-        candidates.append(list_basic.text)
-
-    # Some exports tuck the type into deeper nodes (including unexpected future
-    # voucher types). Sweep every descendant tag that contains "VCHTYPE" or
-    # "VOUCHERTYPE" to avoid missing Purchase/Sales or custom types.
-    for elem in voucher.iter():
-        tag_upper = elem.tag.upper()
-        if "VCHTYPE" in tag_upper or "VOUCHERTYPE" in tag_upper:
-            candidates.append(elem.text)
 
     for candidate in candidates:
         cleaned = _clean(candidate)
