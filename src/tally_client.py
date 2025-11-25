@@ -265,18 +265,20 @@ def _parse_daybook(raw: str) -> Iterable[Voucher]:
         for entry in voucher.findall(".//ALLLEDGERENTRIES.LIST"):
             ledger = entry.findtext("LEDGERNAME", "")
             amount_raw = _to_float(entry.findtext("AMOUNT", "0"))
-            is_deemed_positive = entry.findtext("ISDEEMEDPOSITIVE", "No") == "Yes"
 
-            # Prefer the explicit Dr/Cr split from Tally: positive amounts are
-            # debit, negative amounts are credit. When the amount is zero or not
-            # signed, fall back to ISDEEMEDPOSITIVE where "Yes" represents
-            # credit and "No" represents debit as per Tally docs.
-            if amount_raw > 0:
+            # Tally's ISDEEMEDPOSITIVE is the most reliable indicator:
+            #   "Yes"  => Credit, "No" => Debit. Only fall back to the sign
+            # of the amount when the flag is missing so debits/credits match
+            # what Tally shows for Dr/Cr.
+            deemed_text = (entry.findtext("ISDEEMEDPOSITIVE", "") or "").strip().lower()
+            if deemed_text in ("yes", "y", "true"):
+                is_debit = False
+            elif deemed_text in ("no", "n", "false"):
                 is_debit = True
             elif amount_raw < 0:
                 is_debit = False
             else:
-                is_debit = not is_deemed_positive
+                is_debit = True
 
             entries.append(
                 LedgerEntry(
