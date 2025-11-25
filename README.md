@@ -6,8 +6,8 @@ A lightweight Streamlit dashboard that connects to a running Tally instance (via
 - Connects to Tally over the XML/HTTP interface (`http://127.0.0.1:9000` when Tally is open in the background).
 - Pulls Day Book entries for a selectable date range.
 - Aggregates ledgers into Revenue, Cost of Goods Sold, Expenses, Assets, and Liabilities with heuristics to keep numbers accurate.
-- Displays KPIs, balance snapshot, top products/services, and a searchable voucher grid for quick investigation.
-- Calculates ledger opening and closing balances for the selected date range (opening as of the "From" date, closing as of the "To" date) and offers a CSV download.
+- Displays KPIs, balance snapshot, top products/services, and a searchable voucher grid (with debit/credit/nett columns that should sum to zero) for quick investigation.
+- Calculates ledger opening and closing balances for the selected date range (opening as of the "From" date, closing as of the "To" date) with a nett (opening minus closing) check that should also total zero, and offers a CSV download.
 
 ## Running locally
 1. Install dependencies:

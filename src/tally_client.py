@@ -171,6 +171,7 @@ def fetch_ledgers(
             {
                 "Ledger Name": name,
                 **values,
+                "Nett": round(values["Opening Balance"] - values["Closing Balance"], 2),
             }
             for name, values in sorted(ledgers.items())
         ]
@@ -197,6 +198,7 @@ def fetch_ledgers(
         closing = opening + in_period_delta.get(name, 0.0)
         values["Opening Balance"] = round(opening, 2)
         values["Closing Balance"] = round(closing, 2)
+        values["Nett"] = round(opening - closing, 2)
 
     return [
         {

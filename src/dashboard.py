@@ -118,7 +118,11 @@ def main() -> None:
 
     st.markdown("---")
     st.subheader("Voucher Details")
-    st.dataframe(_voucher_dataframe(vouchers), use_container_width=True)
+    voucher_df = _voucher_dataframe(vouchers)
+    st.dataframe(voucher_df, use_container_width=True)
+    st.caption(
+        f"Voucher nett total: {voucher_df['Nett'].sum():,.2f} (should be 0.00 if balanced)"
+    )
 
     st.markdown("---")
     st.subheader("Ledger Balances (Opening → Closing)")
@@ -128,8 +132,12 @@ def main() -> None:
             ledger_df.style.format({
                 "Opening Balance": "₹{:,.2f}",
                 "Closing Balance": "₹{:,.2f}",
+                "Nett": "₹{:,.2f}",
             }),
             use_container_width=True,
+        )
+        st.caption(
+            f"Ledger nett total: {ledger_df['Nett'].sum():,.2f} (opening - closing should net to 0.00)"
         )
         st.download_button(
             "Download Ledgers",
@@ -146,6 +154,7 @@ def _voucher_dataframe(vouchers):
     rows = []
     for voucher in vouchers:
         for entry in voucher.ledger_entries:
+            net = entry.amount if entry.is_debit else -entry.amount
             rows.append(
                 {
                     "Date": voucher.date,
@@ -153,6 +162,7 @@ def _voucher_dataframe(vouchers):
                     "Ledger": entry.ledger_name,
                     "Debit": entry.amount if entry.is_debit else 0,
                     "Credit": entry.amount if not entry.is_debit else 0,
+                    "Nett": net,
                 }
             )
     return pd.DataFrame(rows)
@@ -166,6 +176,7 @@ def _sample_vouchers():
             date=date.today() - timedelta(days=3),
             ledger_entries=[
                 LedgerEntry("Product A", 120000.0, True),
+                LedgerEntry("Bank", 70000.0, False),
                 LedgerEntry("CGS", 50000.0, False),
             ],
         ),
@@ -174,6 +185,7 @@ def _sample_vouchers():
             date=date.today() - timedelta(days=2),
             ledger_entries=[
                 LedgerEntry("Product B", 80000.0, True),
+                LedgerEntry("Bank", 50000.0, False),
                 LedgerEntry("CGS", 30000.0, False),
             ],
         ),
