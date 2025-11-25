@@ -7,7 +7,7 @@ A lightweight Streamlit dashboard that connects to a running Tally instance (via
 - Pulls Day Book entries for a selectable date range, including Sales/Purchase vouchers that post amounts via inventory lines.
 - Aggregates ledgers into Revenue, Cost of Goods Sold, Expenses, Assets, and Liabilities with heuristics to keep numbers accurate.
 - Displays KPIs, balance snapshot, top products/services, and a searchable voucher grid (with debit/credit/nett columns that should sum to zero) for quick investigation.
-- Calculates ledger opening and closing balances for the selected date range (opening as of the "From" date, closing as of the "To" date) with a nett (opening minus closing) check that should also total zero, and offers a CSV download.
+- Provides a master extract of ledgers with their parent group, group nature (Assets/Liabilities/Income/Expense), whether they feed the Balance Sheet or Profit & Loss, and the opening balance, with a CSV download.
 
 ## Running locally
 1. Install dependencies:
@@ -22,7 +22,7 @@ A lightweight Streamlit dashboard that connects to a running Tally instance (via
 4. Use the sidebar to enter host/port (defaults to `127.0.0.1:9000`), click **Connect to Tally** to load companies, choose the company, set your date range, and click **Load from Tally** to fetch live data.
 
 ## Module overview
-- `src/tally_client.py`: Minimal HTTP XML client for fetching Day Book vouchers, ledger masters, and period-aware opening/closing balances.
+- `src/tally_client.py`: Minimal HTTP XML client for fetching Day Book vouchers and master ledger groupings with opening balances.
 - `src/analytics.py`: Aggregates vouchers into MIS-friendly KPIs (revenue, expenses, gross margin, assets/liabilities, best sellers).
 - `src/dashboard.py`: Streamlit UI that connects to Tally, applies analytics, and renders KPIs, charts, and tables.
 

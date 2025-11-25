@@ -125,28 +125,23 @@ def main() -> None:
     )
 
     st.markdown("---")
-    st.subheader("Ledger Balances (Opening → Closing)")
+    st.subheader("Master ledger groupings and Opening Balance")
     if ledger_balances:
         ledger_df = pd.DataFrame(ledger_balances)
         st.dataframe(
             ledger_df.style.format({
                 "Opening Balance": "₹{:,.2f}",
-                "Closing Balance": "₹{:,.2f}",
-                "Nett": "₹{:,.2f}",
             }),
             use_container_width=True,
         )
-        st.caption(
-            f"Ledger nett total: {ledger_df['Nett'].sum():,.2f} (opening - closing should net to 0.00)"
-        )
         st.download_button(
-            "Download Ledgers",
+            "Download Master ledger groupings and Opening Balance",
             ledger_df.to_csv(index=False).encode(),
-            file_name=f"ledgers_{company}_{start_date}_to_{end_date}.csv",
+            file_name=f"ledger_groupings_opening_{company}_{start_date}_to_{end_date}.csv",
             mime="text/csv",
         )
     else:
-        st.caption("Load a company to view ledger-level opening and closing balances.")
+        st.caption("Load a company to view master ledger groupings and opening balances.")
 
 
 

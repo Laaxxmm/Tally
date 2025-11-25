@@ -115,10 +115,13 @@ def fetch_ledgers(
     start: date | None = None,
     end: date | None = None,
 ) -> List[Dict[str, str | float]]:
-    """Return ledger masters with parent, opening and closing balances.
+    """Return master ledger groupings and opening balances.
 
-    When ``start`` and ``end`` are provided, opening balances are as of
-    ``start`` and closing balances as of ``end`` using Day Book movements.
+    The current extract focuses on ledger masters only: ledger name, parent
+    group, the parent's nature (e.g., Assets, Liabilities, Income, Expense),
+    whether that nature flows to the Balance Sheet or Profit & Loss, and the
+    opening balance. Date parameters are accepted for API compatibility but are
+    not used because this view is master-data oriented.
     """
 
     xml_basic = f"""
@@ -156,101 +159,79 @@ def fetch_ledgers(
                 continue
             parent = (ledger.findtext("PARENT", default="") or ledger.get("PARENT", "")).strip()
             opening = _to_float(ledger.findtext("OPENINGBALANCE", "0"))
-            billwise = ledger.findtext("ISBILLWISEON", "No")
             ledgers[name] = {
                 "Parent": parent,
                 "Opening Balance": opening,
-                "Billwise": billwise,
-                "Closing Balance": 0.0,
             }
     except ET.ParseError:
         return []
 
-    if start is None or end is None:
-        _populate_closing_from_trial_balance(company_name, host, port, ledgers)
-        return [
+    group_nature = _fetch_group_nature(company_name, host, port)
+
+    def statement_for(nature: str) -> str:
+        lowered = nature.lower()
+        if lowered in {"income", "expense"}:
+            return "Profit & Loss"
+        if lowered in {"assets", "liabilities"}:
+            return "Balance Sheet"
+        return "(Unknown)"
+
+    rows: List[Dict[str, str | float]] = []
+    for name, values in sorted(ledgers.items()):
+        parent = values.get("Parent", "")
+        nature = group_nature.get(parent, "")
+        rows.append(
             {
                 "Ledger Name": name,
-                **values,
-                "Nett": round(values["Opening Balance"] - values["Closing Balance"], 2),
+                "Parent Group": parent,
+                "Group Nature": nature or "(Unknown)",
+                "Statement": statement_for(nature) if nature else "(Unknown)",
+                "Opening Balance": round(values.get("Opening Balance", 0.0), 2),
             }
-            for name, values in sorted(ledgers.items())
-        ]
+        )
 
-    fy_start = _financial_year_start(start)
-    vouchers = fetch_daybook(company_name, fy_start, end, host, port)
-
-    pre_start_delta: Dict[str, float] = {}
-    in_period_delta: Dict[str, float] = {}
-    for voucher in vouchers:
-        for entry in voucher.ledger_entries:
-            delta = entry.amount if entry.is_debit else -entry.amount
-            if voucher.date < start:
-                pre_start_delta[entry.ledger_name] = pre_start_delta.get(
-                    entry.ledger_name, 0.0
-                ) + delta
-            else:
-                in_period_delta[entry.ledger_name] = in_period_delta.get(
-                    entry.ledger_name, 0.0
-                ) + delta
-
-    for name, values in ledgers.items():
-        opening = values["Opening Balance"] + pre_start_delta.get(name, 0.0)
-        closing = opening + in_period_delta.get(name, 0.0)
-        values["Opening Balance"] = round(opening, 2)
-        values["Closing Balance"] = round(closing, 2)
-        values["Nett"] = round(opening - closing, 2)
-
-    return [
-        {
-            "Ledger Name": name,
-            **values,
-        }
-        for name, values in sorted(ledgers.items())
-    ]
+    return rows
 
 
-def _populate_closing_from_trial_balance(
-    company_name: str, host: str, port: int, ledgers: Dict[str, Dict[str, str | float]]
-) -> None:
-    today = date.today().strftime("%Y%m%d")
-    fy_start = _financial_year_start(date.today()).strftime("%Y%m%d")
-    xml_tb = f"""
+def _fetch_group_nature(company_name: str, host: str, port: int) -> Dict[str, str]:
+    """Return a mapping of group name -> nature (Assets/Liabilities/Income/Expense)."""
+
+    xml_groups = f"""
 <ENVELOPE>
-  <HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER>
+  <HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>List of Groups</ID></HEADER>
   <BODY>
-    <EXPORTDATA>
-      <REQUESTDESC>
-        <REPORTNAME>Trial Balance</REPORTNAME>
-        <STATICVARIABLES>
-          <SVCURRENTCOMPANY>{company_name}</SVCURRENTCOMPANY>
-          <SVFROMDATE>{fy_start}</SVFROMDATE>
-          <SVTODATE>{today}</SVTODATE>
-          <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
-        </STATICVARIABLES>
-      </REQUESTDESC>
-    </EXPORTDATA>
+    <DESC>
+      <STATICVARIABLES>
+        <SVCURRENTCOMPANY>{company_name}</SVCURRENTCOMPANY>
+        <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+      </STATICVARIABLES>
+      <TDL>
+        <TDLMESSAGE>
+          <COLLECTION NAME="List of Groups" ISMODIFY="No">
+            <TYPE>Group</TYPE>
+            <BELONGSTO>Yes</BELONGSTO>
+            <FETCH>Name</FETCH>
+            <FETCH>Parent</FETCH>
+            <FETCH>NatureOfGroup</FETCH>
+          </COLLECTION>
+        </TDLMESSAGE>
+      </TDL>
+    </DESC>
   </BODY>
 </ENVELOPE>
 """
-    raw_tb = _clean_tally_xml(_post_xml(xml_tb, host, port))
+    raw_groups = _clean_tally_xml(_post_xml(xml_groups, host, port))
+    mapping: Dict[str, str] = {}
     try:
-        root_tb = ET.fromstring(raw_tb)
-        for ledger in root_tb.findall(".//LEDGER"):
-            name = (ledger.findtext("NAME", "") or "").strip()
-            if name in ledgers:
-                ledgers[name]["Closing Balance"] = _to_float(
-                    ledger.findtext("CLOSINGBALANCE", "0")
-                )
+        root_groups = ET.fromstring(raw_groups)
+        for group in root_groups.findall(".//GROUP"):
+            name = (group.get("NAME") or group.findtext("NAME", "") or "").strip()
+            nature = (group.findtext("NATUREOFGROUP", "") or group.get("NATUREOFGROUP", "")).strip()
+            if name:
+                mapping[name] = nature
     except ET.ParseError:
-        return
-
-
-def _financial_year_start(anchor: date) -> date:
-    year = anchor.year
-    if anchor.month < 4:
-        year -= 1
-    return date(year, 4, 1)
+        return {}
+    return mapping
 
 
 def _parse_daybook(raw: str) -> Iterable[Voucher]:
