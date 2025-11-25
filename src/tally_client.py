@@ -12,8 +12,8 @@ from datetime import date
 from typing import Dict, Iterable, List
 import re
 import xml.etree.ElementTree as ET
-
-import requests
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 
 @dataclass
@@ -31,6 +31,15 @@ class Voucher:
     narration: str = ""
 
 
+__all__ = [
+    "LedgerEntry",
+    "Voucher",
+    "fetch_companies",
+    "fetch_daybook",
+    "fetch_ledgers",
+]
+
+
 def _clean_tally_xml(resp: str | None) -> str:
     if not resp:
         return ""
@@ -41,9 +50,13 @@ def _clean_tally_xml(resp: str | None) -> str:
 def _post_xml(xml: str, host: str, port: int) -> str:
     url = f"http://{host}:{port}"
     headers = {"Content-Type": "text/xml; charset=utf-8"}
-    response = requests.post(url, headers=headers, data=xml, timeout=90)
-    response.raise_for_status()
-    return response.text
+    data = xml.encode("utf-8")
+    req = Request(url, data=data, headers=headers, method="POST")
+    try:
+        with urlopen(req, timeout=90) as resp:
+            return resp.read().decode("utf-8")
+    except (HTTPError, URLError) as exc:
+        raise ConnectionError(f"Tally connection failed: {exc}")
 
 
 def fetch_companies(host: str, port: int) -> List[str]:
