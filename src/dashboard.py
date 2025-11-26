@@ -2,13 +2,11 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
-from typing import Dict
 import io
 
 import pandas as pd
 import streamlit as st
 
-from analytics import summarize
 from tally_client import (
     _fiscal_year_start,
     fetch_companies,
@@ -87,6 +85,7 @@ def _inject_theme():
                 border: 1px solid var(--grey-mid);
                 box-shadow: var(--shadow);
                 padding: 14px 16px;
+                margin-bottom: 10px;
             }
 
             .metric-label {
@@ -264,7 +263,7 @@ def _render_overview_cards(tb_df: pd.DataFrame, opening_stock: float, closing_st
     indirect_income = -_sum_t2clb(tb_df, "no", "income")
     net_profit = gross_profit + indirect_income - indirect_expense
 
-    cards = st.columns(3)
+    cards = st.columns(3, gap="large")
     with cards[0]:
         _render_kpi("Revenue (Direct)", revenue)
     with cards[1]:
@@ -272,7 +271,7 @@ def _render_overview_cards(tb_df: pd.DataFrame, opening_stock: float, closing_st
     with cards[2]:
         _render_kpi("COGS", cogs)
 
-    cards2 = st.columns(3)
+    cards2 = st.columns(3, gap="large")
     with cards2[0]:
         _render_kpi("Gross Profit", gross_profit)
     with cards2[1]:
@@ -283,6 +282,31 @@ def _render_overview_cards(tb_df: pd.DataFrame, opening_stock: float, closing_st
     cards3 = st.columns(1)
     with cards3[0]:
         _render_kpi("Net Profit", net_profit)
+
+
+def _render_monthly_revenue_chart(voucher_df: pd.DataFrame):
+    """Render month-on-month revenue from Day Book nett values (multiplied by -1)."""
+
+    if voucher_df is None or voucher_df.empty:
+        st.info("Load vouchers to view month-on-month revenue.")
+        return
+
+    df = voucher_df.copy()
+    df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+    df = df.dropna(subset=["Date"])
+    if df.empty:
+        st.info("No dated vouchers to chart.")
+        return
+
+    df["Month"] = df["Date"].dt.to_period("M").astype(str)
+    df["Revenue"] = df["Nett"].astype(float) * -1
+    monthly = df.groupby("Month")["Revenue"].sum().reset_index()
+    monthly = monthly.sort_values("Month")
+
+    st.markdown("<div style='margin-top:12px;'>", unsafe_allow_html=True)
+    st.subheader("Month-on-Month Revenue")
+    st.bar_chart(monthly.set_index("Month"))
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
 def main() -> None:
@@ -317,38 +341,6 @@ def main() -> None:
     if not vouchers:
         st.info("Showing sample data. Use the sidebar to connect and load live vouchers from Tally.")
         vouchers = _sample_vouchers()
-
-    ledger_map = _default_ledger_map()
-    snapshot = summarize(vouchers, ledger_map)
-
-    st.markdown("<div class='app-shell'>", unsafe_allow_html=True)
-    kpi_cols = st.columns(3)
-    with kpi_cols[0]:
-        _render_kpi("Revenue", snapshot.revenue)
-    with kpi_cols[1]:
-        _render_kpi("Profit / Loss", snapshot.profit_loss, accent=snapshot.profit_loss < 0)
-    with kpi_cols[2]:
-        _render_kpi("Gross Margin", snapshot.gross_margin)
-    st.markdown("</div>", unsafe_allow_html=True)
-
-    st.markdown("<div class='app-shell'>", unsafe_allow_html=True)
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.subheader("Balance Sheet Snapshot")
-        st.bar_chart(
-            pd.DataFrame(
-                {
-                    "Category": ["Assets", "Liabilities"],
-                    "Amount": [snapshot.assets, snapshot.liabilities],
-                }
-            ).set_index("Category")
-        )
-
-    with col2:
-        st.subheader("Top Products / Services")
-        st.table(pd.DataFrame(snapshot.best_sellers, columns=["Ledger", "Revenue"]))
-    st.markdown("</div>", unsafe_allow_html=True)
 
     st.markdown("<div class='app-shell'>", unsafe_allow_html=True)
     st.subheader("Voucher Export")
@@ -417,6 +409,7 @@ def main() -> None:
         closing_stock_val = user_cb_input or 0.0
 
         _render_overview_cards(tb_df, opening_stock_val, closing_stock_val)
+        _render_monthly_revenue_chart(voucher_df)
         st.markdown("</div>", unsafe_allow_html=True)
     else:
         st.info("Select a company to compute the dynamic trial balance.")
@@ -587,16 +580,6 @@ def _sample_vouchers():
         ),
     ]
     return sample
-
-
-def _default_ledger_map() -> Dict[str, str]:
-    return {
-        "Product A": "Revenue",
-        "Product B": "Revenue",
-        "CGS": "Cost of Goods Sold",
-        "Rent Expense": "Expense",
-        "Bank": "Asset",
-    }
 
 
 if __name__ == "__main__":
