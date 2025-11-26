@@ -581,29 +581,46 @@ def classify_bs_or_pnl(is_revenue: str | None, nature: str | None) -> str:
     return "Balance Sheet"
 
 
-def classify_type(nature: str | None, group_name: str, parent_name: str) -> str:
-    """Classify a group as Asset, Liability, Income, or Expense using Tally's nature."""
+def classify_type(nature: str | None, group_name: str, parent_name: str, is_revenue: str | None) -> str:
+    """Classify a group using Tally's revenue flag and nature strings.
+
+    The revenue flag from Tally is the primary driver (P&L vs Balance Sheet),
+    with nature/labels only acting as tie-breakers. This avoids misclassifying
+    Balance Sheet groups such as "Misc. Expenses (ASSET)" as expenses.
+    """
 
     nature_clean = (nature or "").lower()
-    if "asset" in nature_clean:
-        return "Asset"
-    if "liabilit" in nature_clean:
-        return "Liability"
-    if "income" in nature_clean or "revenue" in nature_clean or "sale" in nature_clean:
-        return "Income"
-    if "expense" in nature_clean or "purchase" in nature_clean:
-        return "Expense"
+    labels = " ".join([group_name or "", parent_name or ""]).lower()
+    rev_clean = (is_revenue or "").strip().lower()
 
-    # Fallback: infer from parent/name keywords directly from Tally labels
-    normalized = " ".join([group_name or "", parent_name or ""]).lower()
-    if "income" in normalized or "revenue" in normalized or "sale" in normalized:
+    def _has(tokens: tuple[str, ...], haystack: str) -> bool:
+        return any(token in haystack for token in tokens)
+
+    # Tally-driven path: revenue flag explicitly marks P&L vs Balance Sheet
+    if rev_clean in {"yes", "y", "true"}:
+        if _has(("income", "revenue", "sale"), nature_clean) or _has(("income", "revenue", "sale"), labels):
+            return "Income"
+        if _has(("expense", "purchase"), nature_clean) or _has(("expense", "purchase"), labels):
+            return "Expense"
         return "Income"
-    if "expense" in normalized or "purchase" in normalized:
-        return "Expense"
-    if "liability" in normalized:
-        return "Liability"
-    if "asset" in normalized:
+
+    if rev_clean in {"no", "n", "false"}:
+        if _has(("liabil", "reserve", "capital", "loan"), nature_clean) or _has(("liabil", "reserve", "capital", "loan"), labels):
+            return "Liability"
+        if _has(("asset",), nature_clean) or _has(("asset", "(asset)"), labels):
+            return "Asset"
+        # Balance Sheet default leans to Asset unless liability keywords appear
         return "Asset"
+
+    # Fallbacks when the revenue flag is missing
+    if _has(("asset",), nature_clean) or _has(("asset",), labels):
+        return "Asset"
+    if _has(("liabil", "reserve", "capital", "loan"), nature_clean) or _has(("liabil", "reserve", "capital", "loan"), labels):
+        return "Liability"
+    if _has(("income", "revenue", "sale"), nature_clean) or _has(("income", "revenue", "sale"), labels):
+        return "Income"
+    if _has(("expense", "purchase"), nature_clean) or _has(("expense", "purchase"), labels):
+        return "Expense"
     return "Asset"
 
 
@@ -646,7 +663,7 @@ def _parse_group_master(raw: str) -> List[Dict[str, str | float | bool]]:
         affects_gp_flag = _first_non_empty([group.findtext("AFFECTSGROSSPROFIT"), group.get("AFFECTSGROSSPROFIT")])
 
         bs_or_pnl = classify_bs_or_pnl(is_revenue, nature)
-        gtype = classify_type(nature, name, parent)
+        gtype = classify_type(nature, name, parent, is_revenue)
         affects_gp = determine_affects_gross_profit(affects_gp_flag, nature, name, parent)
 
         rows.append(
