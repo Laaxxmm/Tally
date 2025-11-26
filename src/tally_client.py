@@ -41,7 +41,9 @@ __all__ = [
     "fetch_daybook",
     "fetch_ledgers",
     "fetch_ledger_master",
+    "fetch_group_master",
     "export_ledger_opening_excel",
+    "export_group_master_excel",
 ]
 
 
@@ -378,6 +380,117 @@ def export_ledger_opening_excel(company_name: str, host: str, port: int) -> byte
     return output.read()
 
 
+# ---------------------------------------------------------------------------
+# Group master extraction with BS/P&L classification
+# ---------------------------------------------------------------------------
+
+GROUP_MASTER_REQUEST_TEMPLATE = """
+<ENVELOPE>
+  <HEADER>
+    <VERSION>1</VERSION>
+    <TALLYREQUEST>Export</TALLYREQUEST>
+    <TYPE>Collection</TYPE>
+    <ID>Group Master List</ID>
+  </HEADER>
+  <BODY>
+    <DESC>
+      <STATICVARIABLES>
+        <SVCURRENTCOMPANY>{company_name}</SVCURRENTCOMPANY>
+        <REMOTECMPNAME>{company_name}</REMOTECMPNAME>
+        <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+      </STATICVARIABLES>
+      <TDL>
+        <TDLMESSAGE>
+          <COLLECTION NAME="Group Master List" ISMODIFY="No">
+            <TYPE>Group</TYPE>
+            <BELONGSTO>Yes</BELONGSTO>
+            <FETCH>NAME</FETCH>
+            <FETCH>PARENT</FETCH>
+            <FETCH>PARENTNAME</FETCH>
+          </COLLECTION>
+        </TDLMESSAGE>
+      </TDL>
+    </DESC>
+  </BODY>
+</ENVELOPE>
+"""
+
+
+GROUP_MASTER_FALLBACK_REQUEST = """
+<ENVELOPE>
+  <HEADER>
+    <VERSION>1</VERSION>
+    <TALLYREQUEST>Export</TALLYREQUEST>
+    <TYPE>Collection</TYPE>
+    <ID>List of Groups</ID>
+  </HEADER>
+  <BODY>
+    <DESC>
+      <STATICVARIABLES>
+        <SVCURRENTCOMPANY>{company_name}</SVCURRENTCOMPANY>
+        <REMOTECMPNAME>{company_name}</REMOTECMPNAME>
+        <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+      </STATICVARIABLES>
+    </DESC>
+  </BODY>
+</ENVELOPE>
+"""
+
+
+def fetch_group_master(company_name: str, host: str, port: int) -> List[Dict[str, str | float | bool]]:
+    """Return chart-of-account groups with derived BS/P&L classifications."""
+
+    url = f"http://{host}:{port}"
+    headers = {"Content-Type": "text/xml; charset=utf-8"}
+    body = GROUP_MASTER_REQUEST_TEMPLATE.format(company_name=company_name)
+
+    try:
+        response = requests.post(url, data=body.encode("utf-8"), headers=headers, timeout=60)
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        raise ConnectionError("Tally is not reachable. Ensure it is running with HTTP enabled.") from exc
+
+    cleaned = _clean_tally_xml(response.text)
+    rows = _parse_group_master(cleaned)
+
+    if not rows:
+        try:
+            fallback_body = GROUP_MASTER_FALLBACK_REQUEST.format(company_name=company_name)
+            fb_resp = requests.post(url, data=fallback_body.encode("utf-8"), headers=headers, timeout=60)
+            fb_resp.raise_for_status()
+        except requests.RequestException as exc:
+            raise ConnectionError("Tally is not reachable. Ensure it is running with HTTP enabled.") from exc
+
+        rows = _parse_group_master(_clean_tally_xml(fb_resp.text))
+
+    if not rows:
+        raise RuntimeError("No groups returned from Tally. Open the company and retry.")
+
+    print(f"Extracted {len(rows)} groups from Tally")
+    return sorted(rows, key=lambda r: r["GroupName"].lower())
+
+
+def export_group_master_excel(company_name: str, host: str, port: int) -> bytes:
+    """Return Excel bytes for the group master extract."""
+
+    import io
+    import pandas as pd
+
+    rows = fetch_group_master(company_name, host, port)
+    df = pd.DataFrame(rows, columns=[
+        "GroupName",
+        "ParentName",
+        "BS_or_PnL",
+        "Type",
+        "AffectsGrossProfit",
+    ])
+
+    output = io.BytesIO()
+    df.to_excel(output, index=False, engine="openpyxl")
+    output.seek(0)
+    return output.read()
+
+
 def _normalize_drcr(value: str) -> float:
     """Convert Dr/Cr suffixed opening balances to signed floats."""
 
@@ -432,6 +545,128 @@ def _parse_ledger_master(raw: str) -> List[Dict[str, str | float]]:
                 "LedgerParent": parent,
                 "OpeningBalanceRaw": opening_raw,
                 "OpeningBalanceNormalized": opening_norm,
+            }
+        )
+
+    return rows
+
+
+def get_parent_name(node: ET.Element) -> str:
+    """Return the group's parent, defaulting to itself when blank."""
+
+    parent = _extract_parent(node)
+    if parent:
+        return parent
+    name = _first_non_empty([node.get("NAME"), node.findtext("NAME")])
+    return name or ""
+
+
+def classify_bs_or_pnl(group_name: str, parent_name: str) -> str:
+    """Determine whether a group contributes to the Balance Sheet or P&L."""
+
+    group_type = classify_type(group_name, parent_name)
+    if group_type in ("Asset", "Liability"):
+        return "Balance Sheet"
+    return "P&L"
+
+
+def classify_type(group_name: str, parent_name: str) -> str:
+    """Classify a group as Asset, Liability, Income, or Expense."""
+
+    normalized = [s.lower() for s in (group_name, parent_name) if s]
+
+    priority_map = {
+        "capital account": "Liability",
+        "reserves": "Liability",
+        "surplus": "Liability",
+        "loans (liability)": "Liability",
+        "secured loans": "Liability",
+        "unsecured loans": "Liability",
+        "current liabilities": "Liability",
+        "sundry creditors": "Liability",
+        "duties & taxes": "Liability",
+        "provisions": "Liability",
+        "bank od a/c": "Liability",
+        "suspense account": "Liability",
+        "branch/divisions": "Asset",
+        "investments": "Asset",
+        "fixed assets": "Asset",
+        "current assets": "Asset",
+        "bank accounts": "Asset",
+        "cash-in-hand": "Asset",
+        "deposits (asset)": "Asset",
+        "loans & advances (asset)": "Asset",
+        "stock-in-hand": "Asset",
+        "sundry debtors": "Asset",
+        "sales accounts": "Income",
+        "direct incomes": "Income",
+        "indirect incomes": "Income",
+        "purchases accounts": "Expense",
+        "direct expenses": "Expense",
+        "indirect expenses": "Expense",
+    }
+
+    for name in normalized:
+        for key, value in priority_map.items():
+            if key in name:
+                return value
+
+    keyword_rules = {
+        "income": "Income",
+        "revenue": "Income",
+        "expense": "Expense",
+        "purchase": "Expense",
+        "sale": "Income",
+        "asset": "Asset",
+        "liability": "Liability",
+        "capital": "Liability",
+    }
+
+    for name in normalized:
+        for key, value in keyword_rules.items():
+            if key in name:
+                return value
+
+    return "Asset"
+
+
+def determine_affects_gross_profit(group_name: str, parent_name: str) -> str:
+    """Return "Yes" when the group affects gross profit."""
+
+    normalized = " ".join([group_name or "", parent_name or ""]).lower()
+    gross_keys = ["sales", "purchases", "direct incomes", "direct expenses"]
+    for key in gross_keys:
+        if key in normalized:
+            return "Yes"
+    return "No"
+
+
+def _parse_group_master(raw: str) -> List[Dict[str, str | float | bool]]:
+    """Parse a Tally group master payload into structured rows."""
+
+    try:
+        root = ET.fromstring(raw)
+    except ET.ParseError as exc:
+        raise RuntimeError("Unable to parse Tally group master response.") from exc
+
+    rows: List[Dict[str, str | float | bool]] = []
+    for group in root.findall(".//GROUP"):
+        name = _first_non_empty([group.get("NAME"), group.findtext("NAME")])
+        if not name:
+            continue
+
+        parent = get_parent_name(group)
+        bs_or_pnl = classify_bs_or_pnl(name, parent)
+        gtype = classify_type(name, parent)
+        affects_gp = determine_affects_gross_profit(name, parent)
+
+        rows.append(
+            {
+                "GroupName": name,
+                "ParentName": parent or name,
+                "BS_or_PnL": bs_or_pnl,
+                "Type": gtype,
+                "AffectsGrossProfit": affects_gp,
             }
         )
 

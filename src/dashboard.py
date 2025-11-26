@@ -9,7 +9,7 @@ import pandas as pd
 import streamlit as st
 
 from analytics import summarize
-from tally_client import fetch_companies, fetch_daybook, fetch_ledger_master
+from tally_client import fetch_companies, fetch_daybook, fetch_group_master, fetch_ledger_master
 
 
 st.set_page_config(page_title="Tally MIS Dashboard", layout="wide")
@@ -37,6 +37,24 @@ def _build_ledger_excel(company: str, host: str, port: int):
         "LedgerParent",
         "OpeningBalanceRaw",
         "OpeningBalanceNormalized",
+    ])
+    buffer = io.BytesIO()
+    df.to_excel(buffer, index=False, engine="openpyxl")
+    buffer.seek(0)
+    return buffer.read(), len(df)
+
+
+@st.cache_data(show_spinner=False)
+def _build_group_excel(company: str, host: str, port: int):
+    """Fetch group masters and return Excel bytes plus group count."""
+
+    rows = fetch_group_master(company, host, port)
+    df = pd.DataFrame(rows, columns=[
+        "GroupName",
+        "ParentName",
+        "BS_or_PnL",
+        "Type",
+        "AffectsGrossProfit",
     ])
     buffer = io.BytesIO()
     df.to_excel(buffer, index=False, engine="openpyxl")
@@ -134,22 +152,39 @@ def main() -> None:
     st.markdown("---")
     st.subheader("Chart of Accounts (Download Only)")
     if company:
-        if st.button("Download Ledger Openings (Excel)", type="primary"):
-            with st.spinner("Building ledger master workbook..."):
-                try:
-                    excel_bytes, count = _build_ledger_excel(company, host, int(port))
-                except Exception as exc:
-                    st.error(f"Failed to load ledgers: {exc}")
-                else:
-                    st.success(f"Ready · {count:,} ledgers")
-                    st.download_button(
-                        label="Download Ledger Master Opening Balances",
-                        data=excel_bytes,
-                        file_name=f"Ledger_Master_Openings_{company}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    )
+        col_a, col_b = st.columns(2)
+        with col_a:
+            if st.button("Download Ledger Openings (Excel)", type="primary"):
+                with st.spinner("Building ledger master workbook..."):
+                    try:
+                        excel_bytes, count = _build_ledger_excel(company, host, int(port))
+                    except Exception as exc:
+                        st.error(f"Failed to load ledgers: {exc}")
+                    else:
+                        st.success(f"Ready · {count:,} ledgers")
+                        st.download_button(
+                            label="Download Ledger Master Opening Balances",
+                            data=excel_bytes,
+                            file_name=f"Ledger_Master_Openings_{company}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        )
+        with col_b:
+            if st.button("Download Group Master (Excel)", type="primary"):
+                with st.spinner("Building group master workbook..."):
+                    try:
+                        excel_bytes, count = _build_group_excel(company, host, int(port))
+                    except Exception as exc:
+                        st.error(f"Failed to load groups: {exc}")
+                    else:
+                        st.success(f"Ready · {count:,} groups")
+                        st.download_button(
+                            label="Download Group Master", 
+                            data=excel_bytes,
+                            file_name=f"Group_Master_{company}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        )
     else:
-        st.info("Select a company to download its ledger list.")
+        st.info("Select a company to download its ledger and group lists.")
 
 
 def _voucher_dataframe(vouchers):
