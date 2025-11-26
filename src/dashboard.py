@@ -108,32 +108,26 @@ def _sum_t2clb(tb_df: pd.DataFrame, affects_gp: str, ledger_type: str) -> float:
     return float(filtered["T2Dynamic CLB"].astype(float).sum())
 
 
-def _compute_cogs(tb_df: pd.DataFrame) -> float:
-    """Compute COGS = Opening Stock + Purchases – Closing Stock."""
+def _compute_cogs(tb_df: pd.DataFrame, opening_stock: float, closing_stock: float) -> float:
+    """Compute COGS using user-entered stock levels and Purchase Accounts T2Dynamic CLB."""
 
     if tb_df is None or tb_df.empty:
         return 0.0
 
-    # Opening/closing stock are typically assets that affect gross profit.
-    name_series = tb_df["LedgerName"].astype(str)
-    opening_mask = name_series.str.contains("opening stock", case=False, na=False)
-    closing_mask = name_series.str.contains("closing stock", case=False, na=False)
+    purchase_mask = tb_df["GroupName"].astype(str).str.casefold() == "purchase accounts".casefold()
+    purchases = 0.0
+    if "T2Dynamic CLB" in tb_df:
+        purchases = float(tb_df.loc[purchase_mask, "T2Dynamic CLB"].astype(float).sum())
 
-    opening_stock = float(tb_df.loc[opening_mask, "DynamicOpening"].astype(float).sum())
-    closing_stock = float(tb_df.loc[closing_mask, "DynamicClosing"].astype(float).sum())
-
-    # Purchases align to direct expenses in the trial balance.
-    purchases = _sum_t2clb(tb_df, "yes", "expense")
-
-    return opening_stock + purchases - closing_stock
+    return float(opening_stock) + purchases - float(closing_stock)
 
 
-def _render_overview_cards(tb_df: pd.DataFrame):
+def _render_overview_cards(tb_df: pd.DataFrame, opening_stock: float, closing_stock: float):
     """Render revenue/expense/profit overview cards derived from the dynamic trial balance."""
 
     revenue = _sum_t2clb(tb_df, "yes", "income")
     direct_expense = _sum_t2clb(tb_df, "yes", "expense")
-    cogs = _compute_cogs(tb_df)
+    cogs = _compute_cogs(tb_df, opening_stock, closing_stock)
     gross_profit = revenue - direct_expense - cogs
 
     indirect_expense = _sum_t2clb(tb_df, "no", "expense")
@@ -276,7 +270,17 @@ def main() -> None:
     if tb_df is not None and not tb_df.empty:
         st.markdown("---")
         st.subheader("Performance Overview (Dynamic)")
-        _render_overview_cards(tb_df)
+        stock_col1, stock_col2 = st.columns(2)
+        with stock_col1:
+            opening_stock_input = st.number_input(
+                "Opening stock for the period", value=0.0, step=1000.0, format="%.2f"
+            )
+        with stock_col2:
+            closing_stock_input = st.number_input(
+                "Closing stock for the period", value=0.0, step=1000.0, format="%.2f"
+            )
+
+        _render_overview_cards(tb_df, opening_stock_input, closing_stock_input)
     else:
         st.info("Select a company to compute the dynamic trial balance.")
 
