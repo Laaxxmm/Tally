@@ -343,6 +343,7 @@ def main() -> None:
     tb_to = st.session_state.get("tb_to")
     user_ob_input: float | None = st.session_state.get("user_ob_input")
     user_cb_input: float | None = st.session_state.get("user_cb_input")
+    static_tb_df: pd.DataFrame | None = st.session_state.get("static_tb_df")
 
     if overview_vouchers is None:
         overview_vouchers = _voucher_dataframe(_sample_vouchers())
@@ -461,10 +462,38 @@ def main() -> None:
                 file_name=f"Day_Book_{company or 'Sample'}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        st.markdown("<div class='app-shell'>", unsafe_allow_html=True)
+        st.subheader("Static Trial Balance")
+        if overview_vouchers is None or overview_vouchers.empty:
+            st.info("Load the full Day Book to compute the static trial balance.")
+        elif company:
+            if st.button("Build Static Trial Balance", type="primary"):
+                with st.spinner("Computing static trial balance..."):
+                    try:
+                        static_tb_df = _build_static_trial_balance(
+                            company, host, int(port), overview_vouchers
+                        )
+                    except Exception as exc:
+                        st.error(f"Failed to build static trial balance: {exc}")
+                    else:
+                        st.session_state.static_tb_df = static_tb_df
+                        st.success(f"Static trial balance ready ({len(static_tb_df):,} ledgers)")
+        else:
+            st.info("Select a company to compute the static trial balance.")
+
+        if static_tb_df is not None and not static_tb_df.empty:
+            st.download_button(
+                label="Download Static Trial Balance (Excel)",
+                data=_to_excel_bytes(static_tb_df),
+                file_name=f"Static_Trial_Balance_{company or 'Sample'}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
             st.dataframe(
-                overview_vouchers.style.format({"Debit": "{:.2f}", "Credit": "{:.2f}", "Nett": "{:.2f}"}),
+                static_tb_df.style.format(precision=2),
                 use_container_width=True,
-                height=420,
+                height=480,
             )
         st.markdown("</div>", unsafe_allow_html=True)
 
@@ -609,6 +638,49 @@ def _build_dynamic_trial_balance(
 
     tb_df = pd.DataFrame(rows).sort_values("LedgerName").reset_index(drop=True)
     return tb_df, voucher_df
+
+
+def _build_static_trial_balance(
+    company: str, host: str, port: int, voucher_df: pd.DataFrame
+) -> pd.DataFrame:
+    """Compute a static trial balance using full Day Book movements."""
+
+    if voucher_df is None or voucher_df.empty:
+        raise RuntimeError("Day Book is empty; load vouchers first.")
+
+    ledger_rows = _load_ledger_master(company, host, port, None, None)
+    group_rows = _load_group_master(company, host, port, None, None)
+
+    ledger_parent_map = {row["LedgerName"]: row["LedgerParent"] for row in ledger_rows}
+    ledger_opening_map = {row["LedgerName"]: row["OpeningBalanceNormalized"] for row in ledger_rows}
+    group_map = {row["GroupName"]: row for row in group_rows}
+
+    nets_total = voucher_df.groupby("Ledger")["Nett"].sum()
+
+    rows = []
+    for ledger_name, opening in ledger_opening_map.items():
+        parent = ledger_parent_map.get(ledger_name, "") or "(Unknown)"
+        group_info = group_map.get(parent, {})
+        bs_pnl = group_info.get("BS_or_PnL", "")
+        gtype = group_info.get("Type", "")
+        affects_gp = group_info.get("AffectsGrossProfit", "")
+
+        closing = opening + nets_total.get(ledger_name, 0.0)
+
+        rows.append(
+            {
+                "LedgerName": ledger_name,
+                "GroupName": parent,
+                "ParentName": group_info.get("ParentName", parent),
+                "BS_or_PnL": bs_pnl,
+                "Type": gtype,
+                "AffectsGrossProfit": affects_gp,
+                "OpeningBalance": opening,
+                "StaticClosing": closing,
+            }
+        )
+
+    return pd.DataFrame(rows).sort_values("LedgerName").reset_index(drop=True)
 
 
 def _to_excel_bytes(df: pd.DataFrame) -> bytes:

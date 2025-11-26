@@ -4,9 +4,10 @@ A lightweight Streamlit dashboard that connects to a running Tally instance (via
 
 ## Features
 - Connects to Tally over the XML/HTTP interface (`http://127.0.0.1:9000` when Tally is open in the background).
-- Pulls the full Day Book history (all dates), including Sales/Purchase vouchers that post amounts via inventory lines.
+- Pulls the full Day Book history (all dates), including Sales/Purchase vouchers that post amounts via inventory lines, and offers the vouchers as a download-only extract.
 - Exports the chart-of-accounts ledger list as an Excel download (Name, Under, Opening Balance Raw, Opening Balance Normalized) without displaying it in the UI, using Dr/Cr-aware parsing so values mirror Tally.
 - Exports a Group master extract (GroupName, ParentName, Balance-Sheet/P&L classification, type, and gross-profit flag) so you can audit chart-of-accounts structure.
+- Builds a Static Trial Balance from Day Book + Ledger + Group masters using the full Day Book history, showing ledger/group context with static opening balances and static closing balances (opening + full nett movements) alongside an Excel download.
 - Builds a Dynamic Trial Balance from Day Book + Ledger + Group masters with user-entered date ranges and user-supplied opening/closing balance inputs, showing fiscal-year-aligned opening balances, the **T2Dynamic OB** roll-forward (movements from fiscal start to the day before the From date), the in-window **T2Dynamic CLB** (movements between From/To), dynamic opening, and dynamic closing balances with an Excel download.
 - Presents a performance overview built off the dynamic trial balance: uses the opening/closing stock values entered with the trial balance inputs, computes COGS (User Opening Stock + Purchases – User Closing Stock where Purchases = **T2Dynamic CLB** for Purchase Accounts), gross profit (Revenue – Direct Expense – COGS), indirect income/expense cards, and a net profit rollup based on **T2Dynamic CLB** totals. Direct expenses exclude Purchase Accounts and revenue/indirect income figures follow the sign of the underlying **T2Dynamic CLB** totals.
 - Aggregates ledgers into Revenue, Cost of Goods Sold, Expenses, Assets, and Liabilities with heuristics to keep numbers accurate.
