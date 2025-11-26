@@ -83,9 +83,19 @@ def fetch_companies(host: str, port: int) -> List[str]:
         return []
 
 
-def fetch_daybook(company_name: str, start: date, end: date, host: str, port: int) -> List[Voucher]:
-    from_str = start.strftime("%Y%m%d")
-    to_str = end.strftime("%Y%m%d")
+def fetch_daybook(
+    company_name: str,
+    start: date | None = None,
+    end: date | None = None,
+    host: str = "127.0.0.1",
+    port: int = 9000,
+) -> List[Voucher]:
+    date_filters = ""
+    if start and end:
+        from_str = start.strftime("%Y%m%d")
+        to_str = end.strftime("%Y%m%d")
+        date_filters = f"\n        <SVFROMDATE>{from_str}</SVFROMDATE>\n        <SVTODATE>{to_str}</SVTODATE>"
+
     xml = f"""
 <ENVELOPE>
 <HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER>
@@ -94,9 +104,7 @@ def fetch_daybook(company_name: str, start: date, end: date, host: str, port: in
     <REQUESTDESC>
       <REPORTNAME>Voucher Register</REPORTNAME>
       <STATICVARIABLES>
-        <SVCURRENTCOMPANY>{company_name}</SVCURRENTCOMPANY>
-        <SVFROMDATE>{from_str}</SVFROMDATE>
-        <SVTODATE>{to_str}</SVTODATE>
+        <SVCURRENTCOMPANY>{company_name}</SVCURRENTCOMPANY>{date_filters}
         <EXPLODEFLAG>Yes</EXPLODEFLAG>
         <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
       </STATICVARIABLES>

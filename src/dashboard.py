@@ -23,8 +23,10 @@ def _load_companies(host: str, port: int):
 
 
 @st.cache_data(show_spinner=False)
-def _load_data(company: str, start: date, end: date, host: str, port: int):
-    return fetch_daybook(company, start, end, host, port)
+def _load_data(company: str, host: str, port: int):
+    """Load the full Day Book history for the selected company."""
+
+    return fetch_daybook(company, None, None, host, port)
 
 
 @st.cache_data(show_spinner=False)
@@ -90,21 +92,11 @@ def main() -> None:
     if companies:
         company = st.sidebar.selectbox("Company", companies)
 
-    st.sidebar.header("Date Range")
-    today = date.today()
-    default_start = today - timedelta(days=30)
-    start_date = st.sidebar.date_input("From", value=default_start)
-    end_date = st.sidebar.date_input("To", value=today)
-
-    if start_date > end_date:
-        st.sidebar.error("Start date must be before end date")
-        st.stop()
-
     vouchers = []
-    if company and st.sidebar.button("Load from Tally", type="primary"):
-        with st.spinner(f"Loading Day Book for {company}..."):
+    if company and st.sidebar.button("Load full Day Book", type="primary"):
+        with st.spinner(f"Loading full Day Book for {company}..."):
             try:
-                vouchers = _load_data(company, start_date, end_date, host, int(port))
+                vouchers = _load_data(company, host, int(port))
             except Exception as exc:  # requests or parsing failures
                 st.error(f"Tally connection failed: {exc}")
 
