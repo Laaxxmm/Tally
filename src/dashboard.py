@@ -251,11 +251,11 @@ def main() -> None:
             tb_to = st.date_input("To date", value=date.today())
         with tb_col3:
             user_ob_input = st.number_input(
-                "Opening balance (user input)", value=0.0, step=1000.0, format="%.2f"
+                "Opening stock for the period", value=0.0, step=1000.0, format="%.2f"
             )
         with tb_col4:
             user_cb_input = st.number_input(
-                "Closing balance (user input)", value=0.0, step=1000.0, format="%.2f"
+                "Closing stock for the period", value=0.0, step=1000.0, format="%.2f"
             )
         with tb_col5:
             st.write("\n")
@@ -273,8 +273,8 @@ def main() -> None:
                 else:
                     st.success(f"Dynamic trial balance ready ({len(tb_df):,} ledgers)")
                     st.caption(
-                        f"User-supplied opening balance: {user_ob_input:,.2f} · "
-                        f"User-supplied closing balance: {user_cb_input:,.2f}"
+                        f"User-supplied opening stock: {user_ob_input:,.2f} · "
+                        f"User-supplied closing stock: {user_cb_input:,.2f}"
                     )
                     st.dataframe(
                         tb_df.style.format(
@@ -298,17 +298,10 @@ def main() -> None:
     if tb_df is not None and not tb_df.empty:
         st.markdown("---")
         st.subheader("Performance Overview (Dynamic)")
-        stock_col1, stock_col2 = st.columns(2)
-        with stock_col1:
-            opening_stock_input = st.number_input(
-                "Opening stock for the period", value=0.0, step=1000.0, format="%.2f"
-            )
-        with stock_col2:
-            closing_stock_input = st.number_input(
-                "Closing stock for the period", value=0.0, step=1000.0, format="%.2f"
-            )
+        opening_stock_val = user_ob_input or 0.0
+        closing_stock_val = user_cb_input or 0.0
 
-        _render_overview_cards(tb_df, opening_stock_input, closing_stock_input)
+        _render_overview_cards(tb_df, opening_stock_val, closing_stock_val)
     else:
         st.info("Select a company to compute the dynamic trial balance.")
 

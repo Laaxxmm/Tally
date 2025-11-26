@@ -8,7 +8,7 @@ A lightweight Streamlit dashboard that connects to a running Tally instance (via
 - Exports the chart-of-accounts ledger list as an Excel download (Name, Under, Opening Balance Raw, Opening Balance Normalized) without displaying it in the UI, using Dr/Cr-aware parsing so values mirror Tally.
 - Exports a Group master extract (GroupName, ParentName, Balance-Sheet/P&L classification, type, and gross-profit flag) so you can audit chart-of-accounts structure.
 - Builds a Dynamic Trial Balance from Day Book + Ledger + Group masters with user-entered date ranges and user-supplied opening/closing balance inputs, showing fiscal-year-aligned opening balances, the **T2Dynamic OB** roll-forward (movements from fiscal start to the day before the From date), the in-window **T2Dynamic CLB** (movements between From/To), dynamic opening, and dynamic closing balances with an Excel download.
-- Presents a performance overview built off the dynamic trial balance: prompts for opening/closing stock (used in the calculations), computes COGS (User Opening Stock + Purchases – User Closing Stock where Purchases = **T2Dynamic CLB** for Purchase Accounts), gross profit (Revenue – Direct Expense – COGS), indirect income/expense cards, and a net profit rollup based on **T2Dynamic CLB** totals. Direct expenses exclude Purchase Accounts and revenue/indirect income figures follow the sign of the underlying **T2Dynamic CLB** totals.
+- Presents a performance overview built off the dynamic trial balance: uses the opening/closing stock values entered with the trial balance inputs, computes COGS (User Opening Stock + Purchases – User Closing Stock where Purchases = **T2Dynamic CLB** for Purchase Accounts), gross profit (Revenue – Direct Expense – COGS), indirect income/expense cards, and a net profit rollup based on **T2Dynamic CLB** totals. Direct expenses exclude Purchase Accounts and revenue/indirect income figures follow the sign of the underlying **T2Dynamic CLB** totals.
 - Aggregates ledgers into Revenue, Cost of Goods Sold, Expenses, Assets, and Liabilities with heuristics to keep numbers accurate.
 - Displays KPIs, balance snapshot, top products/services, and a searchable voucher grid (with debit/credit/nett columns that should sum to zero) for quick investigation.
 
@@ -23,7 +23,7 @@ A lightweight Streamlit dashboard that connects to a running Tally instance (via
    streamlit run src/dashboard.py
    ```
 4. Use the sidebar to enter host/port (defaults to `127.0.0.1:9000`), click **Connect to Tally** to load companies, choose the company, and click **Load full Day Book** to fetch the complete voucher history.
-5. For a Dynamic Trial Balance: select a company, pick **From**/**To** dates, enter your overall opening/closing balance figures, click **Fetch Dynamic Trial Balance**, and optionally download the Excel output and view the performance overview cards.
+5. For a Dynamic Trial Balance: select a company, pick **From**/**To** dates, enter your opening/closing stock figures, click **Fetch Dynamic Trial Balance**, and optionally download the Excel output and view the performance overview cards.
 
 ## Module overview
 - `src/tally_client.py`: Minimal HTTP XML client for fetching Day Book vouchers and chart-of-accounts ledgers/groups (including Dr/Cr-normalized opening balances and Excel export helpers).
