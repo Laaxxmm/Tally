@@ -327,66 +327,6 @@ def _render_ytd_overview_cards(tb_df: pd.DataFrame, opening_stock: float, closin
         _render_kpi("Net Profit (YTD)", net_profit)
 
 
-def _render_overview_cards(tb_df: pd.DataFrame, opening_stock: float, closing_stock: float):
-    """Render revenue/expense/profit overview cards derived from the dynamic trial balance."""
-
-    revenue = -_sum_t2clb(tb_df, "yes", "income")
-    direct_expense = _sum_t2clb(
-        tb_df, "yes", "expense", exclude_groups={"Purchase Accounts"}
-    )
-    cogs = _compute_cogs(tb_df, opening_stock, closing_stock)
-    gross_profit = revenue - direct_expense - cogs
-
-    indirect_expense = _sum_t2clb(tb_df, "no", "expense")
-    indirect_income = -_sum_t2clb(tb_df, "no", "income")
-    net_profit = gross_profit + indirect_income - indirect_expense
-
-    cards = st.columns(3, gap="large")
-    with cards[0]:
-        _render_kpi("Revenue (Direct)", revenue)
-    with cards[1]:
-        _render_kpi("Expense (Direct)", direct_expense)
-    with cards[2]:
-        _render_kpi("COGS", cogs)
-
-    cards2 = st.columns(3, gap="large")
-    with cards2[0]:
-        _render_kpi("Gross Profit", gross_profit)
-    with cards2[1]:
-        _render_kpi("Income (Indirect)", indirect_income)
-    with cards2[2]:
-        _render_kpi("Expense (Indirect)", indirect_expense)
-
-    cards3 = st.columns(1)
-    with cards3[0]:
-        _render_kpi("Net Profit", net_profit)
-
-
-def _render_monthly_revenue_chart(voucher_df: pd.DataFrame):
-    """Render month-on-month revenue from Day Book nett values (multiplied by -1)."""
-
-    if voucher_df is None or voucher_df.empty:
-        st.info("Load vouchers to view month-on-month revenue.")
-        return
-
-    df = voucher_df.copy()
-    df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
-    df = df.dropna(subset=["Date"])
-    if df.empty:
-        st.info("No dated vouchers to chart.")
-        return
-
-    df["Month"] = df["Date"].dt.to_period("M").astype(str)
-    df["Revenue"] = df["Nett"].astype(float) * -1
-    monthly = df.groupby("Month")["Revenue"].sum().reset_index()
-    monthly = monthly.sort_values("Month")
-
-    st.markdown("<div style='margin-top:12px;'>", unsafe_allow_html=True)
-    st.subheader("Month-on-Month Revenue")
-    st.bar_chart(monthly.set_index("Month"))
-    st.markdown("</div>", unsafe_allow_html=True)
-
-
 def main() -> None:
     st.sidebar.header("Tally Connection")
     host = st.sidebar.text_input("Host", value="127.0.0.1")
@@ -577,18 +517,6 @@ def main() -> None:
             closing_stock_val = float(user_cb_input or 0.0)
             _render_ytd_overview_cards(ytd_tb_df, opening_stock_val, closing_stock_val)
             st.markdown("</div>", unsafe_allow_html=True)
-
-        if tb_df is not None and not tb_df.empty:
-            st.markdown("<div class='app-shell'>", unsafe_allow_html=True)
-            st.subheader("Performance Overview (Dynamic)")
-            opening_stock_val = float(user_ob_input or 0.0)
-            closing_stock_val = float(user_cb_input or 0.0)
-
-            _render_overview_cards(tb_df, opening_stock_val, closing_stock_val)
-            _render_monthly_revenue_chart(overview_vouchers)
-            st.markdown("</div>", unsafe_allow_html=True)
-        else:
-            st.info("Select a company to compute the dynamic trial balance.")
 
         st.markdown("<div class='app-shell'>", unsafe_allow_html=True)
         st.subheader("Chart of Accounts (Download Only)")
