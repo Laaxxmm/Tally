@@ -8,6 +8,7 @@ A lightweight Streamlit dashboard that connects to a running Tally instance (via
 - Exports the chart-of-accounts ledger list as an Excel download (Name, Under, Opening Balance Raw, Opening Balance Normalized) without displaying it in the UI, using Dr/Cr-aware parsing so values mirror Tally.
 - Exports a Group master extract (GroupName, ParentName, Balance-Sheet/P&L classification, type, and gross-profit flag) so you can audit chart-of-accounts structure.
 - Builds a Dynamic Trial Balance from Day Book + Ledger + Group masters with user-entered date ranges, showing fiscal-year-aligned opening balances, the **T2Dynamic OB** roll-forward (movements from fiscal start to the day before the From date), the in-window **T2Dynamic CLB** (movements between From/To), dynamic opening, and dynamic closing balances with an Excel download.
+- Presents a performance overview built off the dynamic trial balance: direct revenue/expense and gross profit cards, indirect income/expense cards, and a net profit rollup based on **T2Dynamic CLB** totals.
 - Aggregates ledgers into Revenue, Cost of Goods Sold, Expenses, Assets, and Liabilities with heuristics to keep numbers accurate.
 - Displays KPIs, balance snapshot, top products/services, and a searchable voucher grid (with debit/credit/nett columns that should sum to zero) for quick investigation.
 

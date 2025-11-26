@@ -88,6 +88,54 @@ def _render_kpi(label: str, value: float, delta: float | None = None):
         st.metric(label, formatted_value)
 
 
+def _sum_t2clb(tb_df: pd.DataFrame, affects_gp: str, ledger_type: str) -> float:
+    """Return the sum of T2Dynamic CLB for rows matching the given filters."""
+
+    if tb_df is None or tb_df.empty:
+        return 0.0
+
+    affects_norm = affects_gp.lower()
+    type_norm = ledger_type.lower()
+
+    filtered = tb_df[
+        (tb_df["AffectsGrossProfit"].astype(str).str.lower() == affects_norm)
+        & (tb_df["Type"].astype(str).str.lower() == type_norm)
+    ]
+
+    if "T2Dynamic CLB" not in filtered:
+        return 0.0
+
+    return float(filtered["T2Dynamic CLB"].astype(float).sum())
+
+
+def _render_overview_cards(tb_df: pd.DataFrame):
+    """Render revenue/expense/profit overview cards derived from the dynamic trial balance."""
+
+    revenue = _sum_t2clb(tb_df, "yes", "income")
+    direct_expense = _sum_t2clb(tb_df, "yes", "expense")
+    gross_profit = revenue - direct_expense
+
+    indirect_expense = _sum_t2clb(tb_df, "no", "expense")
+    indirect_income = _sum_t2clb(tb_df, "no", "income")
+    net_profit = gross_profit + indirect_income - indirect_expense
+
+    cards = st.columns(3)
+    with cards[0]:
+        _render_kpi("Revenue (Direct)", revenue)
+    with cards[1]:
+        _render_kpi("Expense (Direct)", direct_expense)
+    with cards[2]:
+        _render_kpi("Gross Profit", gross_profit)
+
+    cards2 = st.columns(3)
+    with cards2[0]:
+        _render_kpi("Income (Indirect)", indirect_income)
+    with cards2[1]:
+        _render_kpi("Expense (Indirect)", indirect_expense)
+    with cards2[2]:
+        _render_kpi("Net Profit", net_profit)
+
+
 def main() -> None:
     st.sidebar.header("Tally Connection")
     host = st.sidebar.text_input("Host", value="127.0.0.1")
@@ -109,6 +157,7 @@ def main() -> None:
         company = st.sidebar.selectbox("Company", companies)
 
     vouchers = []
+    tb_df = None
     if company and st.sidebar.button("Load full Day Book", type="primary"):
         with st.spinner(f"Loading full Day Book for {company}..."):
             try:
@@ -174,30 +223,35 @@ def main() -> None:
             st.error("From date cannot be after To date.")
         else:
             with st.spinner("Computing dynamic trial balance..."):
-                    try:
-                        tb_df = _build_dynamic_trial_balance(company, host, int(port), tb_from, tb_to)
-                    except Exception as exc:
-                        st.error(f"Failed to build trial balance: {exc}")
-                    else:
-                        st.success(f"Dynamic trial balance ready ({len(tb_df):,} ledgers)")
-                        st.dataframe(
-                            tb_df.style.format(
-                                {
-                                    "T2Dynamic OB": "₹{:,.2f}",
-                                    "DynamicOpening": "₹{:,.2f}",
-                                    "T2Dynamic CLB": "₹{:,.2f}",
-                                    "DynamicClosing": "₹{:,.2f}",
-                                    "OpeningBalance": "₹{:,.2f}",
-                                }
-                            ),
-                            use_container_width=True,
-                        )
-                        st.download_button(
-                            label="Download Dynamic Trial Balance (Excel)",
-                            data=_to_excel_bytes(tb_df),
-                            file_name=f"Dynamic_Trial_Balance_{company}_{tb_from}_{tb_to}.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        )
+                try:
+                    tb_df = _build_dynamic_trial_balance(company, host, int(port), tb_from, tb_to)
+                except Exception as exc:
+                    st.error(f"Failed to build trial balance: {exc}")
+                else:
+                    st.success(f"Dynamic trial balance ready ({len(tb_df):,} ledgers)")
+                    st.dataframe(
+                        tb_df.style.format(
+                            {
+                                "T2Dynamic OB": "₹{:,.2f}",
+                                "DynamicOpening": "₹{:,.2f}",
+                                "T2Dynamic CLB": "₹{:,.2f}",
+                                "DynamicClosing": "₹{:,.2f}",
+                                "OpeningBalance": "₹{:,.2f}",
+                            }
+                        ),
+                        use_container_width=True,
+                    )
+                    st.download_button(
+                        label="Download Dynamic Trial Balance (Excel)",
+                        data=_to_excel_bytes(tb_df),
+                        file_name=f"Dynamic_Trial_Balance_{company}_{tb_from}_{tb_to}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    )
+
+    if tb_df is not None and not tb_df.empty:
+        st.markdown("---")
+        st.subheader("Performance Overview (Dynamic)")
+        _render_overview_cards(tb_df)
     else:
         st.info("Select a company to compute the dynamic trial balance.")
 
