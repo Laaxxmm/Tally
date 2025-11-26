@@ -30,6 +30,16 @@ def _load_data(company: str, host: str, port: int):
 
 
 @st.cache_data(show_spinner=False)
+def _load_ledger_master(company: str, host: str, port: int):
+    return fetch_ledger_master(company, host, port)
+
+
+@st.cache_data(show_spinner=False)
+def _load_group_master(company: str, host: str, port: int):
+    return fetch_group_master(company, host, port)
+
+
+@st.cache_data(show_spinner=False)
 def _build_ledger_excel(company: str, host: str, port: int):
     """Fetch ledger masters and return Excel bytes plus ledger count."""
 
@@ -142,6 +152,48 @@ def main() -> None:
     )
 
     st.markdown("---")
+    st.subheader("Dynamic Trial Balance")
+    if company:
+        tb_col1, tb_col2, tb_col3 = st.columns([1, 1, 1])
+        with tb_col1:
+            tb_from = st.date_input("From date", value=date.today() - timedelta(days=30))
+        with tb_col2:
+            tb_to = st.date_input("To date", value=date.today())
+        with tb_col3:
+            st.write("\n")
+            fetch_tb = st.button("Fetch Dynamic Trial Balance", type="primary")
+
+        if fetch_tb:
+            if tb_from > tb_to:
+                st.error("From date cannot be after To date.")
+            else:
+                with st.spinner("Computing dynamic trial balance..."):
+                    try:
+                        tb_df = _build_dynamic_trial_balance(company, host, int(port), tb_from, tb_to)
+                    except Exception as exc:
+                        st.error(f"Failed to build trial balance: {exc}")
+                    else:
+                        st.success(f"Dynamic trial balance ready ({len(tb_df):,} ledgers)")
+                        st.dataframe(
+                            tb_df.style.format(
+                                {
+                                    "DynamicOpening": "₹{:,.2f}",
+                                    "DynamicClosing": "₹{:,.2f}",
+                                    "OpeningBalance": "₹{:,.2f}",
+                                }
+                            ),
+                            use_container_width=True,
+                        )
+                        st.download_button(
+                            label="Download Dynamic Trial Balance (Excel)",
+                            data=_to_excel_bytes(tb_df),
+                            file_name=f"Dynamic_Trial_Balance_{company}_{tb_from}_{tb_to}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        )
+    else:
+        st.info("Select a company to compute the dynamic trial balance.")
+
+    st.markdown("---")
     st.subheader("Chart of Accounts (Download Only)")
     if company:
         col_a, col_b = st.columns(2)
@@ -196,6 +248,70 @@ def _voucher_dataframe(vouchers):
                 }
             )
     return pd.DataFrame(rows)
+
+
+def _build_dynamic_trial_balance(company: str, host: str, port: int, from_date: date, to_date: date) -> pd.DataFrame:
+    """Assemble a dynamic trial balance using Day Book, ledger master, and group master data."""
+
+    vouchers = _load_data(company, host, port)
+    ledger_rows = _load_ledger_master(company, host, port)
+    group_rows = _load_group_master(company, host, port)
+
+    ledger_parent_map = {row["LedgerName"]: row["LedgerParent"] for row in ledger_rows}
+    ledger_opening_map = {row["LedgerName"]: row["OpeningBalanceNormalized"] for row in ledger_rows}
+
+    group_map = {row["GroupName"]: row for row in group_rows}
+
+    # Build Day Book nets by ledger for the two required windows.
+    voucher_df = _voucher_dataframe(vouchers)
+    if voucher_df.empty:
+        raise RuntimeError("Day Book is empty; cannot compute trial balance.")
+
+    voucher_df["Date"] = pd.to_datetime(voucher_df["Date"]).dt.date
+    voucher_df["Nett"] = voucher_df["Nett"].astype(float)
+
+    before_mask = voucher_df["Date"] < from_date
+    in_range_mask = (voucher_df["Date"] >= from_date) & (voucher_df["Date"] <= to_date)
+
+    nets_before = voucher_df.loc[before_mask].groupby("Ledger")["Nett"].sum()
+    nets_in_range = voucher_df.loc[in_range_mask].groupby("Ledger")["Nett"].sum()
+
+    rows = []
+    for ledger_name, opening in ledger_opening_map.items():
+        parent = ledger_parent_map.get(ledger_name, "") or "(Unknown)"
+        group_info = group_map.get(parent, {})
+        bs_pnl = group_info.get("BS_or_PnL", "")
+        gtype = group_info.get("Type", "")
+        affects_gp = group_info.get("AffectsGrossProfit", "")
+
+        pre_net = nets_before.get(ledger_name, 0.0)
+        in_range_net = nets_in_range.get(ledger_name, 0.0)
+
+        dynamic_opening = opening + pre_net
+        dynamic_closing = dynamic_opening + in_range_net
+
+        rows.append(
+            {
+                "LedgerName": ledger_name,
+                "GroupName": parent,
+                "ParentName": group_info.get("ParentName", parent),
+                "BS_or_PnL": bs_pnl,
+                "Type": gtype,
+                "AffectsGrossProfit": affects_gp,
+                "OpeningBalance": opening,
+                "DynamicOpening": dynamic_opening,
+                "DynamicClosing": dynamic_closing,
+            }
+        )
+
+    return pd.DataFrame(rows).sort_values("LedgerName").reset_index(drop=True)
+
+
+def _to_excel_bytes(df: pd.DataFrame) -> bytes:
+    buffer = io.BytesIO()
+    df.to_excel(buffer, index=False, engine="openpyxl")
+    buffer.seek(0)
+    return buffer.read()
 
 
 def _sample_vouchers():
