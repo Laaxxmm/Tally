@@ -108,12 +108,33 @@ def _sum_t2clb(tb_df: pd.DataFrame, affects_gp: str, ledger_type: str) -> float:
     return float(filtered["T2Dynamic CLB"].astype(float).sum())
 
 
+def _compute_cogs(tb_df: pd.DataFrame) -> float:
+    """Compute COGS = Opening Stock + Purchases – Closing Stock."""
+
+    if tb_df is None or tb_df.empty:
+        return 0.0
+
+    # Opening/closing stock are typically assets that affect gross profit.
+    name_series = tb_df["LedgerName"].astype(str)
+    opening_mask = name_series.str.contains("opening stock", case=False, na=False)
+    closing_mask = name_series.str.contains("closing stock", case=False, na=False)
+
+    opening_stock = float(tb_df.loc[opening_mask, "DynamicOpening"].astype(float).sum())
+    closing_stock = float(tb_df.loc[closing_mask, "DynamicClosing"].astype(float).sum())
+
+    # Purchases align to direct expenses in the trial balance.
+    purchases = _sum_t2clb(tb_df, "yes", "expense")
+
+    return opening_stock + purchases - closing_stock
+
+
 def _render_overview_cards(tb_df: pd.DataFrame):
     """Render revenue/expense/profit overview cards derived from the dynamic trial balance."""
 
     revenue = _sum_t2clb(tb_df, "yes", "income")
     direct_expense = _sum_t2clb(tb_df, "yes", "expense")
-    gross_profit = revenue - direct_expense
+    cogs = _compute_cogs(tb_df)
+    gross_profit = revenue - direct_expense - cogs
 
     indirect_expense = _sum_t2clb(tb_df, "no", "expense")
     indirect_income = _sum_t2clb(tb_df, "no", "income")
@@ -125,14 +146,18 @@ def _render_overview_cards(tb_df: pd.DataFrame):
     with cards[1]:
         _render_kpi("Expense (Direct)", direct_expense)
     with cards[2]:
-        _render_kpi("Gross Profit", gross_profit)
+        _render_kpi("COGS", cogs)
 
     cards2 = st.columns(3)
     with cards2[0]:
-        _render_kpi("Income (Indirect)", indirect_income)
+        _render_kpi("Gross Profit", gross_profit)
     with cards2[1]:
-        _render_kpi("Expense (Indirect)", indirect_expense)
+        _render_kpi("Income (Indirect)", indirect_income)
     with cards2[2]:
+        _render_kpi("Expense (Indirect)", indirect_expense)
+
+    cards3 = st.columns(1)
+    with cards3[0]:
         _render_kpi("Net Profit", net_profit)
 
 
