@@ -15,6 +15,8 @@ import xml.etree.ElementTree as ET
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+import requests
+
 
 @dataclass
 class LedgerEntry:
@@ -38,6 +40,8 @@ __all__ = [
     "fetch_companies",
     "fetch_daybook",
     "fetch_ledgers",
+    "fetch_ledger_master",
+    "export_ledger_opening_excel",
 ]
 
 
@@ -114,117 +118,22 @@ def fetch_ledgers(
     port: int,
     start: date | None = None,
     end: date | None = None,
-) -> List[Dict[str, str | float]]:
+    ) -> List[Dict[str, str | float]]:
     """Return chart-of-accounts ledgers with parent group and opening balance.
 
-    Parent (Under) values come from the ledger master collection (with TDL
-    fetches for parent + opening balance). Opening balances are refreshed from
-    the Trial Balance report to preserve Dr/Cr directions seen inside Tally.
+    This function is kept for backward compatibility; it now proxies to the
+    more explicit ledger master extractor used for Excel exports.
     """
 
-    # Step 1: pull ledger masters for names, parent groups, and opening values.
-    xml_basic = f"""
-<ENVELOPE>
-  <HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>List of Ledgers</ID></HEADER>
-  <BODY>
-    <DESC>
-      <STATICVARIABLES>
-        <SVCURRENTCOMPANY>{company_name}</SVCURRENTCOMPANY>
-        <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
-      </STATICVARIABLES>
-      <TDL>
-        <TDLMESSAGE>
-          <COLLECTION NAME="List of Ledgers" ISMODIFY="No">
-            <TYPE>Ledger</TYPE>
-            <BELONGSTO>Yes</BELONGSTO>
-            <FETCH>Name</FETCH>
-            <FETCH>Parent</FETCH>
-            <FETCH>Parent Name</FETCH>
-            <FETCH>ParentName</FETCH>
-            <FETCH>OpeningBalance</FETCH>
-          </COLLECTION>
-        </TDLMESSAGE>
-      </TDL>
-    </DESC>
-  </BODY>
-</ENVELOPE>
-"""
-    raw_basic = _clean_tally_xml(_post_xml(xml_basic, host, port))
-    parent_map: Dict[str, str] = {}
-    master_opening: Dict[str, float] = {}
-    try:
-        root_basic = ET.fromstring(raw_basic)
-        for ledger in root_basic.findall(".//LEDGER"):
-            name = (ledger.get("NAME") or "").strip()
-            if not name:
-                continue
-            parent = _extract_parent(ledger)
-            parent_map[name] = parent or "(Unknown)"
-            master_opening[name] = _to_float(ledger.findtext("OPENINGBALANCE"))
-    except ET.ParseError:
-        return []
-
-    # Step 2: pull opening balances from Trial Balance so Dr/Cr values match Tally.
-    today = (end or date.today()).strftime("%Y%m%d")
-    fy_start = _fiscal_year_start(end or date.today()).strftime("%Y%m%d")
-    xml_trial = f"""
-<ENVELOPE>
-  <HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER>
-  <BODY>
-    <EXPORTDATA>
-      <REQUESTDESC>
-        <REPORTNAME>Trial Balance</REPORTNAME>
-        <STATICVARIABLES>
-          <SVCURRENTCOMPANY>{company_name}</SVCURRENTCOMPANY>
-          <SVFROMDATE>{fy_start}</SVFROMDATE>
-          <SVTODATE>{today}</SVTODATE>
-          <ISDETAILED>Yes</ISDETAILED>
-          <EXPLODEFLAG>Yes</EXPLODEFLAG>
-          <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
-        </STATICVARIABLES>
-      </REQUESTDESC>
-    </EXPORTDATA>
-  </BODY>
-</ENVELOPE>
-"""
-    opening_map: Dict[str, float] = {}
-    try:
-        raw_trial = _clean_tally_xml(_post_xml(xml_trial, host, port))
-        root_trial = ET.fromstring(raw_trial)
-        for ledger in root_trial.findall(".//LEDGER"):
-            name = _first_non_empty([ledger.get("NAME"), ledger.findtext("NAME")])
-            if not name:
-                continue
-            opening_val = _to_float(ledger.findtext("OPENINGBALANCE", "0"))
-            opening_map[name.strip()] = round(opening_val, 2)
-            if name.strip() not in parent_map:
-                trial_parent = _extract_parent(ledger)
-                parent_map[name.strip()] = trial_parent or "(Unknown)"
-    except ET.ParseError:
-        pass
-
-    # Step 3: combine parents + openings and return sorted rows.
-    rows: List[Dict[str, str | float]] = []
-    for name, parent in parent_map.items():
-        rows.append(
-            {
-                "Ledger Name": name,
-                "Under": parent,
-                "Opening Balance": opening_map.get(name, master_opening.get(name, 0.0)),
-            }
-        )
-
-    for name, opening in opening_map.items():
-        if name not in parent_map:
-            rows.append(
-                {
-                    "Ledger Name": name,
-                    "Under": "(Unknown)",
-                    "Opening Balance": opening,
-                }
-            )
-
-    return sorted(rows, key=lambda r: r["Ledger Name"].lower())
+    ledger_rows = fetch_ledger_master(company_name, host, port)
+    return [
+        {
+            "Ledger Name": row["LedgerName"],
+            "Under": row["LedgerParent"],
+            "Opening Balance": row["OpeningBalanceNormalized"],
+        }
+        for row in ledger_rows
+    ]
 
 
 def _parse_daybook(raw: str) -> Iterable[Voucher]:
@@ -339,6 +248,139 @@ def _fiscal_year_start(anchor: date) -> date:
 
     year = anchor.year if anchor.month >= 4 else anchor.year - 1
     return date(year, 4, 1)
+
+
+# ---------------------------------------------------------------------------
+# Ledger master extraction with normalized opening balances
+# ---------------------------------------------------------------------------
+
+# Sample XML envelope to pull ledger masters from Tally's chart of accounts.
+LEDGER_MASTER_REQUEST_TEMPLATE = """
+<ENVELOPE>
+  <HEADER>
+    <TALLYREQUEST>Export</TALLYREQUEST>
+    <TYPE>Collection</TYPE>
+    <ID>Ledger Master List</ID>
+  </HEADER>
+  <BODY>
+    <DESC>
+      <STATICVARIABLES>
+        <SVCURRENTCOMPANY>{company_name}</SVCURRENTCOMPANY>
+        <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+      </STATICVARIABLES>
+      <TDL>
+        <TDLMESSAGE>
+          <COLLECTION NAME="Ledger Master List" ISMODIFY="No">
+            <TYPE>Ledger</TYPE>
+            <FETCH>NAME</FETCH>
+            <FETCH>PARENT</FETCH>
+            <FETCH>OPENINGBALANCE</FETCH>
+          </COLLECTION>
+        </TDLMESSAGE>
+      </TDL>
+    </DESC>
+  </BODY>
+</ENVELOPE>
+"""
+
+
+def fetch_ledger_master(company_name: str, host: str, port: int) -> List[Dict[str, str | float]]:
+    """Fetch ledger names, parents, and opening balances from Tally.
+
+    Uses the requests library to post XML to Tally's HTTP listener. Opening
+    balances are parsed from the Dr/Cr suffixed values Tally returns.
+    """
+
+    url = f"http://{host}:{port}"
+    headers = {"Content-Type": "text/xml; charset=utf-8"}
+    xml_body = LEDGER_MASTER_REQUEST_TEMPLATE.format(company_name=company_name)
+
+    # Attempt the HTTP post; if Tally is not running or HTTP is disabled, raise
+    # a clear connection error for the caller to surface.
+    try:
+        response = requests.post(url, data=xml_body.encode("utf-8"), headers=headers, timeout=60)
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        raise ConnectionError("Tally is not reachable. Ensure it is running with HTTP enabled.") from exc
+
+    if not response.text or not response.text.strip():
+        raise RuntimeError("Empty response received from Tally when requesting ledger masters.")
+
+    cleaned = _clean_tally_xml(response.text)
+    try:
+        root = ET.fromstring(cleaned)
+    except ET.ParseError as exc:
+        raise RuntimeError("Unable to parse Tally ledger master response.") from exc
+
+    rows: List[Dict[str, str | float]] = []
+    for ledger in root.findall(".//LEDGER"):
+        name = _first_non_empty([ledger.get("NAME"), ledger.findtext("NAME")])
+        parent = _extract_parent(ledger) or "(Unknown)"
+        opening_raw = (ledger.findtext("OPENINGBALANCE") or ledger.get("OPENINGBALANCE") or "0").strip()
+        opening_norm = _normalize_drcr(opening_raw)
+
+        if not name:
+            continue
+
+        rows.append(
+            {
+                "LedgerName": name,
+                "LedgerParent": parent,
+                "OpeningBalanceRaw": opening_raw,
+                "OpeningBalanceNormalized": opening_norm,
+            }
+        )
+
+    if not rows:
+        raise RuntimeError("No ledgers returned from Tally. Open the company and retry.")
+
+    print(f"Extracted {len(rows)} ledgers from Tally")
+    return sorted(rows, key=lambda r: r["LedgerName"].lower())
+
+
+def export_ledger_opening_excel(company_name: str, host: str, port: int) -> bytes:
+    """Return an Excel workbook (as bytes) containing ledger master openings."""
+
+    import io
+    import pandas as pd
+
+    rows = fetch_ledger_master(company_name, host, port)
+    df = pd.DataFrame(rows, columns=[
+        "LedgerName",
+        "LedgerParent",
+        "OpeningBalanceRaw",
+        "OpeningBalanceNormalized",
+    ])
+
+    output = io.BytesIO()
+    # Use openpyxl via pandas to build the Excel file for download.
+    df.to_excel(output, index=False, engine="openpyxl")
+    output.seek(0)
+    return output.read()
+
+
+def _normalize_drcr(value: str) -> float:
+    """Convert Dr/Cr suffixed opening balances to signed floats."""
+
+    cleaned = (value or "").replace(",", "").strip()
+    if not cleaned:
+        return 0.0
+
+    match = re.match(r"(-?\d*\.?\d+)(?:\s*(Dr|Cr))?", cleaned, flags=re.IGNORECASE)
+    if not match:
+        return 0.0
+
+    number_part, drcr = match.groups()
+    try:
+        number_val = float(number_part)
+    except ValueError:
+        return 0.0
+
+    if drcr:
+        if drcr.lower() == "cr":
+            return -abs(number_val)
+        return abs(number_val)
+    return number_val
 
 
 def _extract_voucher_type(voucher: ET.Element) -> str:

@@ -3,12 +3,13 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 from typing import Dict
+import io
 
 import pandas as pd
 import streamlit as st
 
 from analytics import summarize
-from tally_client import fetch_companies, fetch_daybook, fetch_ledgers
+from tally_client import fetch_companies, fetch_daybook, fetch_ledger_master
 
 
 st.set_page_config(page_title="Tally MIS Dashboard", layout="wide")
@@ -27,8 +28,20 @@ def _load_data(company: str, start: date, end: date, host: str, port: int):
 
 
 @st.cache_data(show_spinner=False)
-def _load_ledgers(company: str, host: str, port: int):
-    return fetch_ledgers(company, host, port)
+def _build_ledger_excel(company: str, host: str, port: int):
+    """Fetch ledger masters and return Excel bytes plus ledger count."""
+
+    rows = fetch_ledger_master(company, host, port)
+    df = pd.DataFrame(rows, columns=[
+        "LedgerName",
+        "LedgerParent",
+        "OpeningBalanceRaw",
+        "OpeningBalanceNormalized",
+    ])
+    buffer = io.BytesIO()
+    df.to_excel(buffer, index=False, engine="openpyxl")
+    buffer.seek(0)
+    return buffer.read(), len(df)
 
 
 def _render_kpi(label: str, value: float, delta: float | None = None):
@@ -121,20 +134,20 @@ def main() -> None:
     st.markdown("---")
     st.subheader("Chart of Accounts (Download Only)")
     if company:
-        if st.button("Download Ledgers", type="primary"):
-            with st.spinner("Fetching ledgers from Tally..."):
-                ledger_rows = _load_ledgers(company, host, int(port))
-                if ledger_rows:
-                    ledger_df = pd.DataFrame(ledger_rows)
-                    st.success(f"Loaded {len(ledger_df):,} ledgers")
-                    st.download_button(
-                        label="Download Ledger List",
-                        data=ledger_df.to_csv(index=False).encode(),
-                        file_name=f"Ledger_List_{company}.csv",
-                        mime="text/csv",
-                    )
+        if st.button("Download Ledger Openings (Excel)", type="primary"):
+            with st.spinner("Building ledger master workbook..."):
+                try:
+                    excel_bytes, count = _build_ledger_excel(company, host, int(port))
+                except Exception as exc:
+                    st.error(f"Failed to load ledgers: {exc}")
                 else:
-                    st.warning("No ledgers returned. Ensure the company is open in Tally.")
+                    st.success(f"Ready · {count:,} ledgers")
+                    st.download_button(
+                        label="Download Ledger Master Opening Balances",
+                        data=excel_bytes,
+                        file_name=f"Ledger_Master_Openings_{company}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    )
     else:
         st.info("Select a company to download its ledger list.")
 
