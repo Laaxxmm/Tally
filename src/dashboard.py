@@ -429,7 +429,10 @@ def main() -> None:
     tb_to = st.session_state.get("tb_to") or tb_to
     user_ob_input = st.session_state.get("user_ob_input") or user_ob_input or 0.0
     user_cb_input = st.session_state.get("user_cb_input") or user_cb_input or 0.0
-    overview_vouchers = st.session_state.get("overview_vouchers_df") or overview_vouchers
+    # Preserve the existing overview vouchers; avoid truthiness on DataFrame which raises ValueError
+    overview_vouchers_state = st.session_state.get("overview_vouchers_df")
+    if overview_vouchers_state is not None:
+        overview_vouchers = overview_vouchers_state
 
     with overview_tab:
         st.markdown("<div class='app-shell'>", unsafe_allow_html=True)
