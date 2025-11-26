@@ -113,14 +113,30 @@ def _inject_theme():
                 padding: 16px;
             }
 
+            /* Global button styling */
+            .stButton > button, .stDownloadButton > button {
+                background: var(--navy);
+                color: white !important;
+                border-radius: var(--card-radius);
+                border: 1px solid var(--navy);
+                box-shadow: var(--shadow);
+                padding: 10px 16px;
+                font-weight: 600;
+            }
+
+            .stButton > button:hover, .stDownloadButton > button:hover {
+                background: var(--navy-light);
+                border-color: var(--navy-light);
+            }
+
             /* KPI buttons inside the overview */
             .kpi-button button {
-                background: white;
+                background: var(--navy);
                 border-radius: var(--card-radius);
-                border: 1px solid var(--grey-mid);
+                border: 1px solid var(--navy);
                 box-shadow: var(--shadow);
                 padding: 14px 16px;
-                color: var(--navy);
+                color: white;
                 font-weight: 700;
                 font-size: 16px;
                 text-align: left;
@@ -128,7 +144,8 @@ def _inject_theme():
             }
 
             .kpi-button button:hover {
-                border-color: var(--navy);
+                background: var(--navy-light);
+                border-color: var(--navy-light);
             }
         </style>
         """,
