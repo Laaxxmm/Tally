@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
+import calendar
 import io
 
 import pandas as pd
@@ -624,54 +625,111 @@ def main() -> None:
 
     with table_tab:
         st.markdown("<div class='app-shell'>", unsafe_allow_html=True)
-        st.subheader("Dynamic Trial Balance Inputs")
+        st.subheader("Dynamic Trial Balance Period")
         fetch_tb = False
+        selected_from: date | None = None
+        selected_to: date | None = None
+
+        def _period_bounds(label: str, kind: str) -> tuple[date, date]:
+            """Return (start, end) dates for the chosen quarter/month in the current fiscal year."""
+
+            today = date.today()
+            fy_start = _fiscal_year_start(today)
+            fy_year = fy_start.year
+
+            def month_range(year: int, month: int) -> tuple[date, date]:
+                last_day = calendar.monthrange(year, month)[1]
+                return date(year, month, 1), date(year, month, last_day)
+
+            if kind == "quarter":
+                q_map = {
+                    "Q1": (4, 6, fy_year),
+                    "Q2": (7, 9, fy_year),
+                    "Q3": (10, 12, fy_year),
+                    "Q4": (1, 3, fy_year + 1),
+                }
+                start_m, end_m, year_val = q_map[label]
+                start_date = date(year_val if start_m != 1 else year_val, start_m, 1)
+                end_date = date(year_val if end_m != 12 else year_val, end_m, calendar.monthrange(year_val, end_m)[1])
+                return start_date, end_date
+
+            month_map = {
+                "April": (fy_year, 4),
+                "May": (fy_year, 5),
+                "June": (fy_year, 6),
+                "July": (fy_year, 7),
+                "August": (fy_year, 8),
+                "September": (fy_year, 9),
+                "October": (fy_year, 10),
+                "November": (fy_year, 11),
+                "December": (fy_year, 12),
+                "January": (fy_year + 1, 1),
+                "February": (fy_year + 1, 2),
+                "March": (fy_year + 1, 3),
+            }
+            year_val, month_val = month_map[label]
+            return month_range(year_val, month_val)
 
         if company:
-            default_from = tb_from or (date.today() - timedelta(days=30))
-            default_to = tb_to or date.today()
-            tb_col1, tb_col2, tb_col3, tb_col4, tb_col5 = st.columns([1, 1, 1, 1, 1])
-            with tb_col1:
-                tb_from = st.date_input("From date", value=default_from)
-            with tb_col2:
-                tb_to = st.date_input("To date", value=default_to)
-            with tb_col3:
-                user_ob_input = st.number_input(
-                    "Opening stock for the period", value=float(user_ob_input or 0.0), step=1000.0, format="%.2f"
-                )
-            with tb_col4:
-                user_cb_input = st.number_input(
-                    "Closing stock for the period", value=float(user_cb_input or 0.0), step=1000.0, format="%.2f"
-                )
-            with tb_col5:
-                st.write("\n")
-                fetch_tb = st.button("Fetch Dynamic Trial Balance", type="primary")
+            st.caption("Choose a fiscal quarter or month to auto-set the dynamic trial balance range.")
+            q_cols = st.columns(4)
+            quarter_clicked = None
+            for idx, q_label in enumerate(["Q1", "Q2", "Q3", "Q4"]):
+                with q_cols[idx]:
+                    if st.button(q_label):
+                        quarter_clicked = q_label
+
+            month_labels = [
+                "April",
+                "May",
+                "June",
+                "July",
+                "August",
+                "September",
+                "October",
+                "November",
+                "December",
+                "January",
+                "February",
+                "March",
+            ]
+            month_cols = st.columns(4)
+            month_clicked = None
+            for idx, m_label in enumerate(month_labels):
+                with month_cols[idx % 4]:
+                    if st.button(m_label):
+                        month_clicked = m_label
+
+            if quarter_clicked:
+                selected_from, selected_to = _period_bounds(quarter_clicked, "quarter")
+            elif month_clicked:
+                selected_from, selected_to = _period_bounds(month_clicked, "month")
+
+            if selected_from and selected_to:
+                fetch_tb = True
+                tb_from, tb_to = selected_from, selected_to
+
         else:
             st.info("Select a company to configure the dynamic trial balance inputs.")
 
         if fetch_tb and company:
-            if tb_from > tb_to:
-                st.error("From date cannot be after To date.")
-            else:
-                with st.spinner("Computing dynamic trial balance..."):
-                    try:
-                        tb_df, tb_vouchers = _build_dynamic_trial_balance(
-                            company, host, int(port), tb_from, tb_to
-                        )
-                    except Exception as exc:
-                        st.error(f"Failed to build trial balance: {exc}")
-                    else:
-                        st.session_state.tb_df = tb_df
-                        st.session_state.tb_vouchers_df = tb_vouchers
-                        st.session_state.tb_from = tb_from
-                        st.session_state.tb_to = tb_to
-                        st.session_state.user_ob_input = float(user_ob_input or 0.0)
-                        st.session_state.user_cb_input = float(user_cb_input or 0.0)
-                        st.success(f"Dynamic trial balance ready ({len(tb_df):,} ledgers)")
-                        st.caption(
-                            f"User-supplied opening stock: {user_ob_input:,.2f} · "
-                            f"User-supplied closing stock: {user_cb_input:,.2f}"
-                        )
+            with st.spinner("Computing dynamic trial balance..."):
+                try:
+                    tb_df, tb_vouchers = _build_dynamic_trial_balance(
+                        company, host, int(port), tb_from, tb_to
+                    )
+                except Exception as exc:
+                    st.error(f"Failed to build trial balance: {exc}")
+                else:
+                    st.session_state.tb_df = tb_df
+                    st.session_state.tb_vouchers_df = tb_vouchers
+                    st.session_state.tb_from = tb_from
+                    st.session_state.tb_to = tb_to
+                    st.session_state.user_ob_input = float(user_ob_input or 0.0)
+                    st.session_state.user_cb_input = float(user_cb_input or 0.0)
+                    st.success(
+                        f"Dynamic trial balance ready ({len(tb_df):,} ledgers) · Period: {tb_from} to {tb_to}"
+                    )
         st.markdown("</div>", unsafe_allow_html=True)
 
         st.markdown("<div class='app-shell'>", unsafe_allow_html=True)
