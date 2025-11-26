@@ -169,11 +169,11 @@ def main() -> None:
             st.write("\n")
             fetch_tb = st.button("Fetch Dynamic Trial Balance", type="primary")
 
-        if fetch_tb:
-            if tb_from > tb_to:
-                st.error("From date cannot be after To date.")
-            else:
-                with st.spinner("Computing dynamic trial balance..."):
+    if fetch_tb:
+        if tb_from > tb_to:
+            st.error("From date cannot be after To date.")
+        else:
+            with st.spinner("Computing dynamic trial balance..."):
                     try:
                         tb_df = _build_dynamic_trial_balance(company, host, int(port), tb_from, tb_to)
                     except Exception as exc:
@@ -185,6 +185,7 @@ def main() -> None:
                                 {
                                     "T2Dynamic OB": "₹{:,.2f}",
                                     "DynamicOpening": "₹{:,.2f}",
+                                    "T2Dynamic CLB": "₹{:,.2f}",
                                     "DynamicClosing": "₹{:,.2f}",
                                     "OpeningBalance": "₹{:,.2f}",
                                 }
@@ -303,10 +304,10 @@ def _build_dynamic_trial_balance(company: str, host: str, port: int, from_date: 
         affects_gp = group_info.get("AffectsGrossProfit", "")
 
         t2_dynamic_ob = nets_t2.get(ledger_name, 0.0)
-        in_range_net = nets_in_range.get(ledger_name, 0.0)
+        t2_dynamic_clb = nets_in_range.get(ledger_name, 0.0)
 
         dynamic_opening = opening + t2_dynamic_ob
-        dynamic_closing = dynamic_opening + in_range_net
+        dynamic_closing = dynamic_opening + t2_dynamic_clb
 
         rows.append(
             {
@@ -319,6 +320,7 @@ def _build_dynamic_trial_balance(company: str, host: str, port: int, from_date: 
                 "OpeningBalance": opening,
                 "T2Dynamic OB": t2_dynamic_ob,
                 "DynamicOpening": dynamic_opening,
+                "T2Dynamic CLB": t2_dynamic_clb,
                 "DynamicClosing": dynamic_closing,
             }
         )
