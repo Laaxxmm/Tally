@@ -258,6 +258,7 @@ def _fiscal_year_start(anchor: date) -> date:
 LEDGER_MASTER_REQUEST_TEMPLATE = """
 <ENVELOPE>
   <HEADER>
+    <VERSION>1</VERSION>
     <TALLYREQUEST>Export</TALLYREQUEST>
     <TYPE>Collection</TYPE>
     <ID>Ledger Master List</ID>
@@ -266,18 +267,42 @@ LEDGER_MASTER_REQUEST_TEMPLATE = """
     <DESC>
       <STATICVARIABLES>
         <SVCURRENTCOMPANY>{company_name}</SVCURRENTCOMPANY>
+        <REMOTECMPNAME>{company_name}</REMOTECMPNAME>
         <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
       </STATICVARIABLES>
       <TDL>
         <TDLMESSAGE>
           <COLLECTION NAME="Ledger Master List" ISMODIFY="No">
             <TYPE>Ledger</TYPE>
+            <BELONGSTO>Yes</BELONGSTO>
             <FETCH>NAME</FETCH>
             <FETCH>PARENT</FETCH>
+            <FETCH>PARENTNAME</FETCH>
             <FETCH>OPENINGBALANCE</FETCH>
           </COLLECTION>
         </TDLMESSAGE>
       </TDL>
+    </DESC>
+  </BODY>
+</ENVELOPE>
+"""
+
+
+LEDGER_MASTER_FALLBACK_REQUEST = """
+<ENVELOPE>
+  <HEADER>
+    <VERSION>1</VERSION>
+    <TALLYREQUEST>Export</TALLYREQUEST>
+    <TYPE>Collection</TYPE>
+    <ID>List of Ledgers</ID>
+  </HEADER>
+  <BODY>
+    <DESC>
+      <STATICVARIABLES>
+        <SVCURRENTCOMPANY>{company_name}</SVCURRENTCOMPANY>
+        <REMOTECMPNAME>{company_name}</REMOTECMPNAME>
+        <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+      </STATICVARIABLES>
     </DESC>
   </BODY>
 </ENVELOPE>
@@ -307,32 +332,26 @@ def fetch_ledger_master(company_name: str, host: str, port: int) -> List[Dict[st
         raise RuntimeError("Empty response received from Tally when requesting ledger masters.")
 
     cleaned = _clean_tally_xml(response.text)
-    try:
-        root = ET.fromstring(cleaned)
-    except ET.ParseError as exc:
-        raise RuntimeError("Unable to parse Tally ledger master response.") from exc
+    rows = _parse_ledger_master(cleaned)
 
-    rows: List[Dict[str, str | float]] = []
-    for ledger in root.findall(".//LEDGER"):
-        name = _first_non_empty([ledger.get("NAME"), ledger.findtext("NAME")])
-        parent = _extract_parent(ledger) or "(Unknown)"
-        opening_raw = (ledger.findtext("OPENINGBALANCE") or ledger.get("OPENINGBALANCE") or "0").strip()
-        opening_norm = _normalize_drcr(opening_raw)
+    # Some Tally builds omit parents/openings unless you use the built-in
+    # "List of Ledgers" collection. If the TDL collection yields nothing, fall
+    # back to the built-in export before surfacing an error to the UI.
+    if not rows:
+        try:
+            fallback_body = LEDGER_MASTER_FALLBACK_REQUEST.format(company_name=company_name)
+            fb_resp = requests.post(url, data=fallback_body.encode("utf-8"), headers=headers, timeout=60)
+            fb_resp.raise_for_status()
+        except requests.RequestException as exc:
+            raise ConnectionError("Tally is not reachable. Ensure it is running with HTTP enabled.") from exc
 
-        if not name:
-            continue
-
-        rows.append(
-            {
-                "LedgerName": name,
-                "LedgerParent": parent,
-                "OpeningBalanceRaw": opening_raw,
-                "OpeningBalanceNormalized": opening_norm,
-            }
-        )
+        cleaned_fb = _clean_tally_xml(fb_resp.text)
+        rows = _parse_ledger_master(cleaned_fb)
 
     if not rows:
-        raise RuntimeError("No ledgers returned from Tally. Open the company and retry.")
+        raise RuntimeError(
+            "No ledgers returned from Tally. Open the company, keep it active, and ensure HTTP access is enabled."
+        )
 
     print(f"Extracted {len(rows)} ledgers from Tally")
     return sorted(rows, key=lambda r: r["LedgerName"].lower())
@@ -381,6 +400,36 @@ def _normalize_drcr(value: str) -> float:
             return -abs(number_val)
         return abs(number_val)
     return number_val
+
+
+def _parse_ledger_master(raw: str) -> List[Dict[str, str | float]]:
+    """Convert a Tally ledger master XML payload into structured rows."""
+
+    try:
+        root = ET.fromstring(raw)
+    except ET.ParseError as exc:
+        raise RuntimeError("Unable to parse Tally ledger master response.") from exc
+
+    rows: List[Dict[str, str | float]] = []
+    for ledger in root.findall(".//LEDGER"):
+        name = _first_non_empty([ledger.get("NAME"), ledger.findtext("NAME")])
+        parent = _extract_parent(ledger) or "(Unknown)"
+        opening_raw = (ledger.findtext("OPENINGBALANCE") or ledger.get("OPENINGBALANCE") or "0").strip()
+        opening_norm = _normalize_drcr(opening_raw)
+
+        if not name:
+            continue
+
+        rows.append(
+            {
+                "LedgerName": name,
+                "LedgerParent": parent,
+                "OpeningBalanceRaw": opening_raw,
+                "OpeningBalanceNormalized": opening_norm,
+            }
+        )
+
+    return rows
 
 
 def _extract_voucher_type(voucher: ET.Element) -> str:
