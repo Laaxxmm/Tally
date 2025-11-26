@@ -576,6 +576,75 @@ def _statement_from_tb(tb_df: pd.DataFrame, statement: str) -> pd.DataFrame:
         return pd.DataFrame()
 
     statement_norm = statement.lower()
+
+    if statement_norm == "p&l":
+        if "T2Dynamic CLB" not in tb_df.columns:
+            return pd.DataFrame()
+
+        def pnl_amount(row: pd.Series) -> float:
+            raw = float(row.get("T2Dynamic CLB", 0.0) or 0.0)
+            t_val = str(row.get("Type", "")).lower()
+            # Incomes are stored negative in the TB cards, flip to display positive figures.
+            return -raw if t_val == "income" else raw
+
+        bs_pnl = tb_df.get("BS_or_PnL", pd.Series(dtype=str)).astype(str).str.lower()
+        pnl_mask = bs_pnl.str.contains("p&l") | bs_pnl.str.contains("profit")
+        type_mask = tb_df.get("Type", pd.Series(dtype=str)).astype(str).str.lower().isin(
+            ["income", "expense"]
+        )
+        mask = pnl_mask | type_mask
+        pnl_df = tb_df.loc[mask].copy()
+        pnl_df["DisplayAmount"] = pnl_df.apply(pnl_amount, axis=1)
+
+        def summarize(section_mask: pd.Series) -> pd.DataFrame:
+            section = pnl_df.loc[section_mask]
+            if section.empty:
+                return pd.DataFrame()
+            grp = (
+                section.groupby("GroupName")["DisplayAmount"]
+                .sum()
+                .reset_index()
+                .sort_values("GroupName")
+            )
+            grp["Line"] = "· " + grp["GroupName"].astype(str)
+            grp["Amount"] = grp["DisplayAmount"]
+            return grp[["Line", "Amount"]]
+
+        revenue_mask = pnl_df["Type"].astype(str).str.lower() == "income"
+        cogs_mask = (pnl_df["Type"].astype(str).str.lower() == "expense") & (
+            pnl_df["AffectsGrossProfit"].astype(str).str.lower() == "yes"
+        )
+        opex_mask = (pnl_df["Type"].astype(str).str.lower() == "expense") & (
+            pnl_df["AffectsGrossProfit"].astype(str).str.lower() != "yes"
+        )
+        other_income_mask = (~cogs_mask) & (
+            pnl_df["Type"].astype(str).str.lower() == "income"
+        ) & (pnl_df["AffectsGrossProfit"].astype(str).str.lower() != "yes")
+
+        revenue_total = pnl_df.loc[revenue_mask, "DisplayAmount"].sum()
+        cogs_total = pnl_df.loc[cogs_mask, "DisplayAmount"].sum()
+        opex_total = pnl_df.loc[opex_mask, "DisplayAmount"].sum()
+        other_income_total = pnl_df.loc[other_income_mask, "DisplayAmount"].sum()
+
+        lines: list[dict[str, float | str]] = []
+        lines.append({"Line": "Revenue", "Amount": revenue_total})
+        lines.extend(summarize(revenue_mask).to_dict(orient="records"))
+        gross_profit = revenue_total - cogs_total
+        lines.append({"Line": "COGS", "Amount": cogs_total})
+        lines.extend(summarize(cogs_mask).to_dict(orient="records"))
+        lines.append({"Line": "Gross Profit", "Amount": gross_profit})
+        lines.append({"Line": "Operating Expenses", "Amount": opex_total})
+        lines.extend(summarize(opex_mask).to_dict(orient="records"))
+        ebit = gross_profit - opex_total
+        lines.append({"Line": "EBIT", "Amount": ebit})
+        if other_income_total != 0:
+            lines.append({"Line": "Other Income", "Amount": other_income_total})
+            lines.extend(summarize(other_income_mask).to_dict(orient="records"))
+        net_profit = ebit + other_income_total
+        lines.append({"Line": "Net Profit", "Amount": net_profit})
+
+        return pd.DataFrame(lines)
+
     bs_pnl = tb_df.get("BS_or_PnL", pd.Series(dtype=str)).astype(str).str.lower()
 
     if statement_norm == "p&l":
