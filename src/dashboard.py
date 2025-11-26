@@ -139,19 +139,27 @@ def _load_companies(host: str, port: int):
 
 
 @st.cache_data(show_spinner=False)
-def _load_data(company: str, host: str, port: int):
-    """Load the full Day Book history for the selected company."""
+def _load_daybook(company: str, host: str, port: int, start: date | None, end: date | None):
+    """Load Day Book vouchers for the selected window (or full history if None)."""
 
-    return fetch_daybook(company, None, None, host, port)
+    return fetch_daybook(company, start, end, host, port)
 
 
 @st.cache_data(show_spinner=False)
-def _load_ledger_master(company: str, host: str, port: int):
+def _load_ledger_master(
+    company: str, host: str, port: int, from_date: date | None, to_date: date | None
+):
+    """Load ledger masters; cache keyed on dates so user inputs refresh dependent data."""
+
     return fetch_ledger_master(company, host, port)
 
 
 @st.cache_data(show_spinner=False)
-def _load_group_master(company: str, host: str, port: int):
+def _load_group_master(
+    company: str, host: str, port: int, from_date: date | None, to_date: date | None
+):
+    """Load group masters; cache keyed on dates so user inputs refresh dependent data."""
+
     return fetch_group_master(company, host, port)
 
 
@@ -329,33 +337,8 @@ def main() -> None:
     if companies:
         company = st.sidebar.selectbox("Company", companies)
 
-    vouchers = []
+    vouchers_df: pd.DataFrame | None = None
     tb_df = None
-    if company and st.sidebar.button("Load full Day Book", type="primary"):
-        with st.spinner(f"Loading full Day Book for {company}..."):
-            try:
-                vouchers = _load_data(company, host, int(port))
-            except Exception as exc:  # requests or parsing failures
-                st.error(f"Tally connection failed: {exc}")
-
-    if not vouchers:
-        st.info("Showing sample data. Use the sidebar to connect and load live vouchers from Tally.")
-        vouchers = _sample_vouchers()
-
-    st.markdown("<div class='app-shell'>", unsafe_allow_html=True)
-    st.subheader("Voucher Export")
-    voucher_df = _voucher_dataframe(vouchers)
-    st.caption(
-        f"Voucher nett total: {voucher_df['Nett'].sum():,.2f} (should be 0.00 if balanced)"
-    )
-    st.download_button(
-        label="Download Voucher Details (Excel)",
-        data=_to_excel_bytes(voucher_df),
-        file_name=f"Day_Book_{company or 'Sample'}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    )
-    st.markdown("</div>", unsafe_allow_html=True)
-
     st.markdown("<div class='app-shell'>", unsafe_allow_html=True)
     st.subheader("Dynamic Trial Balance")
     fetch_tb = False
@@ -385,7 +368,9 @@ def main() -> None:
         else:
             with st.spinner("Computing dynamic trial balance..."):
                 try:
-                    tb_df = _build_dynamic_trial_balance(company, host, int(port), tb_from, tb_to)
+                    tb_df, vouchers_df = _build_dynamic_trial_balance(
+                        company, host, int(port), tb_from, tb_to
+                    )
                 except Exception as exc:
                     st.error(f"Failed to build trial balance: {exc}")
                 else:
@@ -394,63 +379,102 @@ def main() -> None:
                         f"User-supplied opening stock: {user_ob_input:,.2f} · "
                         f"User-supplied closing stock: {user_cb_input:,.2f}"
                     )
-                    st.download_button(
-                        label="Download Dynamic Trial Balance (Excel)",
-                        data=_to_excel_bytes(tb_df),
-                        file_name=f"Dynamic_Trial_Balance_{company}_{tb_from}_{tb_to}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    )
     st.markdown("</div>", unsafe_allow_html=True)
 
-    if tb_df is not None and not tb_df.empty:
+    if vouchers_df is None:
+        vouchers_df = _voucher_dataframe(_sample_vouchers())
+
+    overview_tab, table_tab = st.tabs(["Overview", "Table"])
+
+    with overview_tab:
         st.markdown("<div class='app-shell'>", unsafe_allow_html=True)
-        st.subheader("Performance Overview (Dynamic)")
-        opening_stock_val = user_ob_input or 0.0
-        closing_stock_val = user_cb_input or 0.0
-
-        _render_overview_cards(tb_df, opening_stock_val, closing_stock_val)
-        _render_monthly_revenue_chart(voucher_df)
+        st.subheader("Voucher Export")
+        st.caption(
+            f"Voucher nett total: {vouchers_df['Nett'].sum():,.2f} (should be 0.00 if balanced)"
+        )
+        st.download_button(
+            label="Download Voucher Details (Excel)",
+            data=_to_excel_bytes(vouchers_df),
+            file_name=f"Day_Book_{company or 'Sample'}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
         st.markdown("</div>", unsafe_allow_html=True)
-    else:
-        st.info("Select a company to compute the dynamic trial balance.")
 
-    st.markdown("<div class='app-shell'>", unsafe_allow_html=True)
-    st.subheader("Chart of Accounts (Download Only)")
-    if company:
-        col_a, col_b = st.columns(2)
-        with col_a:
-            if st.button("Download Ledger Openings (Excel)", type="primary"):
-                with st.spinner("Building ledger master workbook..."):
-                    try:
-                        excel_bytes, count = _build_ledger_excel(company, host, int(port))
-                    except Exception as exc:
-                        st.error(f"Failed to load ledgers: {exc}")
-                    else:
-                        st.success(f"Ready · {count:,} ledgers")
-                        st.download_button(
-                            label="Download Ledger Master Opening Balances",
-                            data=excel_bytes,
-                            file_name=f"Ledger_Master_Openings_{company}.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        )
-        with col_b:
-            if st.button("Download Group Master (Excel)", type="primary"):
-                with st.spinner("Building group master workbook..."):
-                    try:
-                        excel_bytes, count = _build_group_excel(company, host, int(port))
-                    except Exception as exc:
-                        st.error(f"Failed to load groups: {exc}")
-                    else:
-                        st.success(f"Ready · {count:,} groups")
-                        st.download_button(
-                            label="Download Group Master", 
-                            data=excel_bytes,
-                            file_name=f"Group_Master_{company}.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        )
-    else:
-        st.info("Select a company to download its ledger and group lists.")
-    st.markdown("</div>", unsafe_allow_html=True)
+        st.markdown("<div class='app-shell'>", unsafe_allow_html=True)
+        st.subheader("Dynamic Trial Balance Exports")
+        if tb_df is not None and not tb_df.empty:
+            st.download_button(
+                label="Download Dynamic Trial Balance (Excel)",
+                data=_to_excel_bytes(tb_df),
+                file_name=f"Dynamic_Trial_Balance_{company}_{tb_from}_{tb_to}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+        else:
+            st.info("Fetch the dynamic trial balance to enable downloads and KPIs.")
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        if tb_df is not None and not tb_df.empty:
+            st.markdown("<div class='app-shell'>", unsafe_allow_html=True)
+            st.subheader("Performance Overview (Dynamic)")
+            opening_stock_val = user_ob_input or 0.0
+            closing_stock_val = user_cb_input or 0.0
+
+            _render_overview_cards(tb_df, opening_stock_val, closing_stock_val)
+            _render_monthly_revenue_chart(vouchers_df)
+            st.markdown("</div>", unsafe_allow_html=True)
+        else:
+            st.info("Select a company to compute the dynamic trial balance.")
+
+        st.markdown("<div class='app-shell'>", unsafe_allow_html=True)
+        st.subheader("Chart of Accounts (Download Only)")
+        if company:
+            col_a, col_b = st.columns(2)
+            with col_a:
+                if st.button("Download Ledger Openings (Excel)", type="primary"):
+                    with st.spinner("Building ledger master workbook..."):
+                        try:
+                            excel_bytes, count = _build_ledger_excel(company, host, int(port))
+                        except Exception as exc:
+                            st.error(f"Failed to load ledgers: {exc}")
+                        else:
+                            st.success(f"Ready · {count:,} ledgers")
+                            st.download_button(
+                                label="Download Ledger Master Opening Balances",
+                                data=excel_bytes,
+                                file_name=f"Ledger_Master_Openings_{company}.xlsx",
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            )
+            with col_b:
+                if st.button("Download Group Master (Excel)", type="primary"):
+                    with st.spinner("Building group master workbook..."):
+                        try:
+                            excel_bytes, count = _build_group_excel(company, host, int(port))
+                        except Exception as exc:
+                            st.error(f"Failed to load groups: {exc}")
+                        else:
+                            st.success(f"Ready · {count:,} groups")
+                            st.download_button(
+                                label="Download Group Master",
+                                data=excel_bytes,
+                                file_name=f"Group_Master_{company}.xlsx",
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            )
+        else:
+            st.info("Select a company to download its ledger and group lists.")
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    with table_tab:
+        st.markdown("<div class='app-shell'>", unsafe_allow_html=True)
+        st.subheader("Dynamic Trial Balance (Table)")
+        if tb_df is not None and not tb_df.empty:
+            st.dataframe(
+                tb_df.style.format(precision=2),
+                use_container_width=True,
+                height=520,
+            )
+        else:
+            st.info("Fetch the dynamic trial balance to view the table.")
+        st.markdown("</div>", unsafe_allow_html=True)
 
 
 def _voucher_dataframe(vouchers):
@@ -479,12 +503,16 @@ def _voucher_dataframe(vouchers):
     return pd.DataFrame(rows)
 
 
-def _build_dynamic_trial_balance(company: str, host: str, port: int, from_date: date, to_date: date) -> pd.DataFrame:
-    """Assemble a dynamic trial balance using Day Book, ledger master, and group master data."""
+def _build_dynamic_trial_balance(
+    company: str, host: str, port: int, from_date: date, to_date: date
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Assemble a dynamic trial balance and return the supporting Day Book data."""
 
-    vouchers = _load_data(company, host, port)
-    ledger_rows = _load_ledger_master(company, host, port)
-    group_rows = _load_group_master(company, host, port)
+    fiscal_start = _fiscal_year_start(from_date)
+
+    vouchers = _load_daybook(company, host, port, fiscal_start, to_date)
+    ledger_rows = _load_ledger_master(company, host, port, from_date, to_date)
+    group_rows = _load_group_master(company, host, port, from_date, to_date)
 
     ledger_parent_map = {row["LedgerName"]: row["LedgerParent"] for row in ledger_rows}
     ledger_opening_map = {row["LedgerName"]: row["OpeningBalanceNormalized"] for row in ledger_rows}
@@ -499,8 +527,6 @@ def _build_dynamic_trial_balance(company: str, host: str, port: int, from_date: 
     voucher_df["Date"] = pd.to_datetime(voucher_df["Date"]).dt.date
     voucher_df["Nett"] = voucher_df["Nett"].astype(float)
 
-    # Restrict Day Book movements to the fiscal year that aligns with the ledger openings.
-    fiscal_start = _fiscal_year_start(from_date)
     voucher_df = voucher_df[voucher_df["Date"] >= fiscal_start]
 
     t2_mask = (voucher_df["Date"] >= fiscal_start) & (voucher_df["Date"] < from_date)
@@ -539,7 +565,8 @@ def _build_dynamic_trial_balance(company: str, host: str, port: int, from_date: 
             }
         )
 
-    return pd.DataFrame(rows).sort_values("LedgerName").reset_index(drop=True)
+    tb_df = pd.DataFrame(rows).sort_values("LedgerName").reset_index(drop=True)
+    return tb_df, voucher_df
 
 
 def _to_excel_bytes(df: pd.DataFrame) -> bytes:
