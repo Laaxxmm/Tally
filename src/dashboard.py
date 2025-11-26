@@ -242,15 +242,22 @@ def _voucher_dataframe(vouchers):
     rows = []
     for voucher in vouchers:
         for entry in voucher.ledger_entries:
-            net = entry.amount if entry.is_debit else -entry.amount
+            debit_amount = entry.amount if entry.is_debit else 0
+            credit_amount = entry.amount if not entry.is_debit else 0
+            # Column labels need to be flipped: what was shown as "Debit" should
+            # now appear under "Credit" and vice versa. The nett value should
+            # reflect the corrected columns (Debit minus Credit).
+            corrected_debit = credit_amount
+            corrected_credit = debit_amount
+            net = corrected_debit - corrected_credit
             rows.append(
                 {
                     "Date": voucher.date,
                     "Voucher No": voucher.voucher_number,
                     "Voucher Type": voucher.voucher_type,
                     "Ledger": entry.ledger_name,
-                    "Debit": entry.amount if entry.is_debit else 0,
-                    "Credit": entry.amount if not entry.is_debit else 0,
+                    "Debit": corrected_debit,
+                    "Credit": corrected_credit,
                     "Nett": net,
                 }
             )
