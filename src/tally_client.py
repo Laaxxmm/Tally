@@ -396,10 +396,16 @@ def _normalize_drcr(value: str) -> float:
         return 0.0
 
     if drcr:
+        # Explicit Dr/Cr suffix wins: Dr should be positive, Cr should be negative
+        # regardless of the sign emitted in the raw value.
         if drcr.lower() == "cr":
             return -abs(number_val)
         return abs(number_val)
-    return number_val
+
+    # When no Dr/Cr marker is present, invert the original sign so ledgers that
+    # surfaced as negative debits / positive credits are normalized to
+    # "Debit = positive, Credit = negative" as requested.
+    return -number_val
 
 
 def _parse_ledger_master(raw: str) -> List[Dict[str, str | float]]:
