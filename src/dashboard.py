@@ -8,7 +8,7 @@ import pandas as pd
 import streamlit as st
 
 from analytics import summarize
-from tally_client import fetch_companies, fetch_daybook, fetch_ledgers
+from tally_client import fetch_companies, fetch_daybook
 
 
 st.set_page_config(page_title="Tally MIS Dashboard", layout="wide")
@@ -24,11 +24,6 @@ def _load_companies(host: str, port: int):
 @st.cache_data(show_spinner=False)
 def _load_data(company: str, start: date, end: date, host: str, port: int):
     return fetch_daybook(company, start, end, host, port)
-
-
-@st.cache_data(show_spinner=False)
-def _load_ledgers(company: str, start: date, end: date, host: str, port: int):
-    return fetch_ledgers(company, host, port, start, end)
 
 
 def _render_kpi(label: str, value: float, delta: float | None = None):
@@ -70,18 +65,12 @@ def main() -> None:
         st.stop()
 
     vouchers = []
-    ledger_balances = []
     if company and st.sidebar.button("Load from Tally", type="primary"):
         with st.spinner(f"Loading Day Book for {company}..."):
             try:
                 vouchers = _load_data(company, start_date, end_date, host, int(port))
             except Exception as exc:  # requests or parsing failures
                 st.error(f"Tally connection failed: {exc}")
-        with st.spinner(f"Loading ledger balances for {company}..."):
-            try:
-                ledger_balances = _load_ledgers(company, start_date, end_date, host, int(port))
-            except Exception as exc:
-                st.error(f"Ledger load failed: {exc}")
 
     if not vouchers:
         st.info("Showing sample data. Use the sidebar to connect and load live vouchers from Tally.")
@@ -123,26 +112,6 @@ def main() -> None:
     st.caption(
         f"Voucher nett total: {voucher_df['Nett'].sum():,.2f} (should be 0.00 if balanced)"
     )
-
-    st.markdown("---")
-    st.subheader("Master ledger groupings and Opening Balance")
-    if ledger_balances:
-        ledger_df = pd.DataFrame(ledger_balances)
-        st.dataframe(
-            ledger_df.style.format({
-                "Opening Balance": "₹{:,.2f}",
-            }),
-            use_container_width=True,
-        )
-        st.download_button(
-            "Download Master ledger groupings and Opening Balance",
-            ledger_df.to_csv(index=False).encode(),
-            file_name=f"ledger_groupings_opening_{company}_{start_date}_to_{end_date}.csv",
-            mime="text/csv",
-        )
-    else:
-        st.caption("Load a company to view master ledger groupings and opening balances.")
-
 
 
 def _voucher_dataframe(vouchers):
