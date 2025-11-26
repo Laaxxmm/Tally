@@ -167,11 +167,14 @@ def _parse_daybook(raw: str) -> Iterable[Voucher]:
 
         for tag in entry_tags:
             for entry in voucher.findall(f".//{tag}"):
-                ledger = (
-                    entry.findtext("LEDGERNAME", "")
-                    or entry.findtext("STOCKITEMNAME", "")
-                    or "(Unknown Ledger)"
-                )
+                ledger = _first_non_empty(
+                    [
+                        entry.findtext("LEDGERNAME"),
+                        entry.findtext(".//LEDGERNAME"),  # accounting allocations within inventory lines
+                        voucher.findtext("PARTYLEDGERNAME"),
+                        entry.findtext("STOCKITEMNAME"),
+                    ]
+                ) or "(Unknown Ledger)"
                 amount_raw = _to_float(entry.findtext("AMOUNT", "0"))
                 deemed_text = (entry.findtext("ISDEEMEDPOSITIVE", "") or "").strip().lower()
                 amount_abs = abs(amount_raw)
