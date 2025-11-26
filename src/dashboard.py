@@ -337,54 +337,90 @@ def main() -> None:
     if companies:
         company = st.sidebar.selectbox("Company", companies)
 
-    vouchers_df: pd.DataFrame | None = None
-    tb_df = None
-    st.markdown("<div class='app-shell'>", unsafe_allow_html=True)
-    st.subheader("Dynamic Trial Balance")
-    fetch_tb = False
-    user_ob_input: float | None = None
-    user_cb_input: float | None = None
-    if company:
-        tb_col1, tb_col2, tb_col3, tb_col4, tb_col5 = st.columns([1, 1, 1, 1, 1])
-        with tb_col1:
-            tb_from = st.date_input("From date", value=date.today() - timedelta(days=30))
-        with tb_col2:
-            tb_to = st.date_input("To date", value=date.today())
-        with tb_col3:
-            user_ob_input = st.number_input(
-                "Opening stock for the period", value=0.0, step=1000.0, format="%.2f"
-            )
-        with tb_col4:
-            user_cb_input = st.number_input(
-                "Closing stock for the period", value=0.0, step=1000.0, format="%.2f"
-            )
-        with tb_col5:
-            st.write("\n")
-            fetch_tb = st.button("Fetch Dynamic Trial Balance", type="primary")
-
-    if fetch_tb:
-        if tb_from > tb_to:
-            st.error("From date cannot be after To date.")
-        else:
-            with st.spinner("Computing dynamic trial balance..."):
-                try:
-                    tb_df, vouchers_df = _build_dynamic_trial_balance(
-                        company, host, int(port), tb_from, tb_to
-                    )
-                except Exception as exc:
-                    st.error(f"Failed to build trial balance: {exc}")
-                else:
-                    st.success(f"Dynamic trial balance ready ({len(tb_df):,} ledgers)")
-                    st.caption(
-                        f"User-supplied opening stock: {user_ob_input:,.2f} · "
-                        f"User-supplied closing stock: {user_cb_input:,.2f}"
-                    )
-    st.markdown("</div>", unsafe_allow_html=True)
+    vouchers_df: pd.DataFrame | None = st.session_state.get("vouchers_df")
+    tb_df = st.session_state.get("tb_df")
+    tb_from = st.session_state.get("tb_from")
+    tb_to = st.session_state.get("tb_to")
+    user_ob_input: float | None = st.session_state.get("user_ob_input")
+    user_cb_input: float | None = st.session_state.get("user_cb_input")
 
     if vouchers_df is None:
         vouchers_df = _voucher_dataframe(_sample_vouchers())
 
     overview_tab, table_tab = st.tabs(["Overview", "Table"])
+
+    with table_tab:
+        st.markdown("<div class='app-shell'>", unsafe_allow_html=True)
+        st.subheader("Dynamic Trial Balance Inputs")
+        fetch_tb = False
+
+        if company:
+            default_from = tb_from or (date.today() - timedelta(days=30))
+            default_to = tb_to or date.today()
+            tb_col1, tb_col2, tb_col3, tb_col4, tb_col5 = st.columns([1, 1, 1, 1, 1])
+            with tb_col1:
+                tb_from = st.date_input("From date", value=default_from)
+            with tb_col2:
+                tb_to = st.date_input("To date", value=default_to)
+            with tb_col3:
+                user_ob_input = st.number_input(
+                    "Opening stock for the period", value=float(user_ob_input or 0.0), step=1000.0, format="%.2f"
+                )
+            with tb_col4:
+                user_cb_input = st.number_input(
+                    "Closing stock for the period", value=float(user_cb_input or 0.0), step=1000.0, format="%.2f"
+                )
+            with tb_col5:
+                st.write("\n")
+                fetch_tb = st.button("Fetch Dynamic Trial Balance", type="primary")
+        else:
+            st.info("Select a company to configure the dynamic trial balance inputs.")
+
+        if fetch_tb and company:
+            if tb_from > tb_to:
+                st.error("From date cannot be after To date.")
+            else:
+                with st.spinner("Computing dynamic trial balance..."):
+                    try:
+                        tb_df, vouchers_df = _build_dynamic_trial_balance(
+                            company, host, int(port), tb_from, tb_to
+                        )
+                    except Exception as exc:
+                        st.error(f"Failed to build trial balance: {exc}")
+                    else:
+                        st.session_state.tb_df = tb_df
+                        st.session_state.vouchers_df = vouchers_df
+                        st.session_state.tb_from = tb_from
+                        st.session_state.tb_to = tb_to
+                        st.session_state.user_ob_input = float(user_ob_input or 0.0)
+                        st.session_state.user_cb_input = float(user_cb_input or 0.0)
+                        st.success(f"Dynamic trial balance ready ({len(tb_df):,} ledgers)")
+                        st.caption(
+                            f"User-supplied opening stock: {user_ob_input:,.2f} · "
+                            f"User-supplied closing stock: {user_cb_input:,.2f}"
+                        )
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        st.markdown("<div class='app-shell'>", unsafe_allow_html=True)
+        st.subheader("Dynamic Trial Balance (Table)")
+        current_tb = st.session_state.get("tb_df")
+        if current_tb is not None and not current_tb.empty:
+            st.dataframe(
+                current_tb.style.format(precision=2),
+                use_container_width=True,
+                height=520,
+            )
+        else:
+            st.info("Fetch the dynamic trial balance to view the table.")
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    # Refresh local variables from session state after processing inputs
+    tb_df = st.session_state.get("tb_df")
+    vouchers_df = st.session_state.get("vouchers_df") or vouchers_df
+    tb_from = st.session_state.get("tb_from") or tb_from
+    tb_to = st.session_state.get("tb_to") or tb_to
+    user_ob_input = st.session_state.get("user_ob_input") or user_ob_input or 0.0
+    user_cb_input = st.session_state.get("user_cb_input") or user_cb_input or 0.0
 
     with overview_tab:
         st.markdown("<div class='app-shell'>", unsafe_allow_html=True)
@@ -403,10 +439,12 @@ def main() -> None:
         st.markdown("<div class='app-shell'>", unsafe_allow_html=True)
         st.subheader("Dynamic Trial Balance Exports")
         if tb_df is not None and not tb_df.empty:
+            from_label = tb_from if tb_from is not None else "NA"
+            to_label = tb_to if tb_to is not None else "NA"
             st.download_button(
                 label="Download Dynamic Trial Balance (Excel)",
                 data=_to_excel_bytes(tb_df),
-                file_name=f"Dynamic_Trial_Balance_{company}_{tb_from}_{tb_to}.xlsx",
+                file_name=f"Dynamic_Trial_Balance_{company}_{from_label}_{to_label}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
         else:
@@ -416,8 +454,8 @@ def main() -> None:
         if tb_df is not None and not tb_df.empty:
             st.markdown("<div class='app-shell'>", unsafe_allow_html=True)
             st.subheader("Performance Overview (Dynamic)")
-            opening_stock_val = user_ob_input or 0.0
-            closing_stock_val = user_cb_input or 0.0
+            opening_stock_val = float(user_ob_input or 0.0)
+            closing_stock_val = float(user_cb_input or 0.0)
 
             _render_overview_cards(tb_df, opening_stock_val, closing_stock_val)
             _render_monthly_revenue_chart(vouchers_df)
@@ -461,19 +499,6 @@ def main() -> None:
                             )
         else:
             st.info("Select a company to download its ledger and group lists.")
-        st.markdown("</div>", unsafe_allow_html=True)
-
-    with table_tab:
-        st.markdown("<div class='app-shell'>", unsafe_allow_html=True)
-        st.subheader("Dynamic Trial Balance (Table)")
-        if tb_df is not None and not tb_df.empty:
-            st.dataframe(
-                tb_df.style.format(precision=2),
-                use_container_width=True,
-                height=520,
-            )
-        else:
-            st.info("Fetch the dynamic trial balance to view the table.")
         st.markdown("</div>", unsafe_allow_html=True)
 
 

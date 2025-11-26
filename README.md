@@ -23,7 +23,7 @@ A lightweight Streamlit dashboard that connects to a running Tally instance (via
    streamlit run src/dashboard.py
    ```
 4. Use the sidebar to enter host/port (defaults to `127.0.0.1:9000`), click **Connect to Tally** to load companies, choose the company, and click **Load full Day Book** to fetch the complete voucher history.
-5. For a Dynamic Trial Balance: select a company, pick **From**/**To** dates, enter your opening/closing stock figures, click **Fetch Dynamic Trial Balance**, and optionally download the Excel output and view the performance overview cards.
+5. For a Dynamic Trial Balance: select a company, open the **Table** tab, pick **From**/**To** dates, enter your opening/closing stock figures, click **Fetch Dynamic Trial Balance**, and optionally download the Excel output and view the performance overview cards.
 
 ## Module overview
 - `src/tally_client.py`: Minimal HTTP XML client for fetching Day Book vouchers and chart-of-accounts ledgers/groups (including Dr/Cr-normalized opening balances and Excel export helpers).
