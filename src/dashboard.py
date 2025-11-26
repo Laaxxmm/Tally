@@ -88,7 +88,12 @@ def _render_kpi(label: str, value: float, delta: float | None = None):
         st.metric(label, formatted_value)
 
 
-def _sum_t2clb(tb_df: pd.DataFrame, affects_gp: str, ledger_type: str) -> float:
+def _sum_t2clb(
+    tb_df: pd.DataFrame,
+    affects_gp: str,
+    ledger_type: str,
+    exclude_groups: set[str] | None = None,
+) -> float:
     """Return the sum of T2Dynamic CLB for rows matching the given filters."""
 
     if tb_df is None or tb_df.empty:
@@ -96,11 +101,17 @@ def _sum_t2clb(tb_df: pd.DataFrame, affects_gp: str, ledger_type: str) -> float:
 
     affects_norm = affects_gp.lower()
     type_norm = ledger_type.lower()
+    exclude_norm = {g.casefold() for g in exclude_groups} if exclude_groups else set()
 
     filtered = tb_df[
         (tb_df["AffectsGrossProfit"].astype(str).str.lower() == affects_norm)
         & (tb_df["Type"].astype(str).str.lower() == type_norm)
     ]
+
+    if exclude_norm:
+        filtered = filtered[
+            ~filtered["GroupName"].astype(str).str.casefold().isin(exclude_norm)
+        ]
 
     if "T2Dynamic CLB" not in filtered:
         return 0.0
@@ -125,13 +136,15 @@ def _compute_cogs(tb_df: pd.DataFrame, opening_stock: float, closing_stock: floa
 def _render_overview_cards(tb_df: pd.DataFrame, opening_stock: float, closing_stock: float):
     """Render revenue/expense/profit overview cards derived from the dynamic trial balance."""
 
-    revenue = _sum_t2clb(tb_df, "yes", "income")
-    direct_expense = _sum_t2clb(tb_df, "yes", "expense")
+    revenue = -_sum_t2clb(tb_df, "yes", "income")
+    direct_expense = _sum_t2clb(
+        tb_df, "yes", "expense", exclude_groups={"Purchase Accounts"}
+    )
     cogs = _compute_cogs(tb_df, opening_stock, closing_stock)
     gross_profit = revenue - direct_expense - cogs
 
     indirect_expense = _sum_t2clb(tb_df, "no", "expense")
-    indirect_income = _sum_t2clb(tb_df, "no", "income")
+    indirect_income = -_sum_t2clb(tb_df, "no", "income")
     net_profit = gross_profit + indirect_income - indirect_expense
 
     cards = st.columns(3)
@@ -294,6 +307,12 @@ def main() -> None:
             closing_stock_input = st.number_input(
                 "Closing stock for the period", value=0.0, step=1000.0, format="%.2f"
             )
+
+        stock_display = st.columns(2)
+        with stock_display[0]:
+            _render_kpi("Opening stock for the period", opening_stock_input)
+        with stock_display[1]:
+            _render_kpi("Closing stock for the period", closing_stock_input)
 
         _render_overview_cards(tb_df, opening_stock_input, closing_stock_input)
     else:
