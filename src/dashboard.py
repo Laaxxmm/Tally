@@ -405,6 +405,14 @@ def main() -> None:
         st.subheader("Dynamic Trial Balance (Table)")
         current_tb = st.session_state.get("tb_df")
         if current_tb is not None and not current_tb.empty:
+            from_label = tb_from if tb_from is not None else "NA"
+            to_label = tb_to if tb_to is not None else "NA"
+            st.download_button(
+                label="Download Dynamic Trial Balance (Excel)",
+                data=_to_excel_bytes(current_tb),
+                file_name=f"Dynamic_Trial_Balance_{company}_{from_label}_{to_label}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
             st.dataframe(
                 current_tb.style.format(precision=2),
                 use_container_width=True,
@@ -424,31 +432,36 @@ def main() -> None:
 
     with overview_tab:
         st.markdown("<div class='app-shell'>", unsafe_allow_html=True)
-        st.subheader("Voucher Export")
-        st.caption(
-            f"Voucher nett total: {vouchers_df['Nett'].sum():,.2f} (should be 0.00 if balanced)"
-        )
-        st.download_button(
-            label="Download Voucher Details (Excel)",
-            data=_to_excel_bytes(vouchers_df),
-            file_name=f"Day_Book_{company or 'Sample'}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
-        st.markdown("</div>", unsafe_allow_html=True)
+        st.subheader("Day Book")
+        if company:
+            if st.button("Load Full Day Book", type="primary"):
+                with st.spinner("Fetching full Day Book..."):
+                    try:
+                        vouchers = _load_daybook(company, host, int(port), None, None)
+                        vouchers_df = _voucher_dataframe(vouchers)
+                    except Exception as exc:
+                        st.error(f"Failed to load Day Book: {exc}")
+                    else:
+                        st.session_state.vouchers_df = vouchers_df
+                        st.success(f"Loaded {len(vouchers_df):,} voucher lines")
+        else:
+            st.info("Select a company to load the Day Book.")
 
-        st.markdown("<div class='app-shell'>", unsafe_allow_html=True)
-        st.subheader("Dynamic Trial Balance Exports")
-        if tb_df is not None and not tb_df.empty:
-            from_label = tb_from if tb_from is not None else "NA"
-            to_label = tb_to if tb_to is not None else "NA"
+        if vouchers_df is not None and not vouchers_df.empty:
+            st.caption(
+                f"Voucher nett total: {vouchers_df['Nett'].sum():,.2f} (should be 0.00 if balanced)"
+            )
             st.download_button(
-                label="Download Dynamic Trial Balance (Excel)",
-                data=_to_excel_bytes(tb_df),
-                file_name=f"Dynamic_Trial_Balance_{company}_{from_label}_{to_label}.xlsx",
+                label="Download Voucher Details (Excel)",
+                data=_to_excel_bytes(vouchers_df),
+                file_name=f"Day_Book_{company or 'Sample'}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
-        else:
-            st.info("Fetch the dynamic trial balance to enable downloads and KPIs.")
+            st.dataframe(
+                vouchers_df.style.format({"Debit": "{:.2f}", "Credit": "{:.2f}", "Nett": "{:.2f}"}),
+                use_container_width=True,
+                height=420,
+            )
         st.markdown("</div>", unsafe_allow_html=True)
 
         if tb_df is not None and not tb_df.empty:
