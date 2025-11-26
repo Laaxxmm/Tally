@@ -28,11 +28,10 @@ A lightweight Streamlit dashboard that connects to a running Tally instance (via
 - `src/dashboard.py`: Streamlit UI that connects to Tally, applies analytics, renders KPIs/charts/tables, and offers ledger and group download buttons.
 
 ## Group classification cheatsheet
-The group master extract includes a few simple, centralized rules (see `tally_client.classify_type`, `classify_bs_or_pnl`, and `determine_affects_gross_profit`):
-- Standard Tally primary groups (e.g., Capital Account, Loans, Current Assets/Liabilities, Sales Accounts, Purchases Accounts) are mapped via a priority dictionary to Asset/Liability/Income/Expense.
-- Secondary keyword checks ("income", "expense", "sale", "purchase", "asset", "liability", "capital") provide a reasonable default when the group name is custom.
-- Balance Sheet vs P&L is inferred from the type (Assets/Liabilities → Balance Sheet; Income/Expense → P&L).
-- Gross profit impact returns "Yes" for sales, purchases, and direct income/expense group families; everything else defaults to "No" so the logic can be adjusted later.
+The group master extract leans on Tally's own flags (see `tally_client.classify_type`, `classify_bs_or_pnl`, and `determine_affects_gross_profit`):
+- `ISREVENUE` from the group master dictates Balance Sheet vs P&L (Yes → P&L, No → Balance Sheet). When `ISREVENUE` is absent, the group nature is used to default sensibly.
+- `NATUREOFGROUP` is used to tag groups as Asset/Liability/Income/Expense (e.g., "Misc. Expenses (ASSET)" stays Asset → Balance Sheet, "Purchase Accounts" stays Expense → P&L, "Indirect Expenses" stays Expense but does not affect gross profit).
+- `AFFECTSGROSSPROFIT` from Tally controls the gross-profit flag; only when that flag is missing do keyword fallbacks apply.
 
 ## Security note
 The dashboard trusts the Tally instance it connects to. Run it on a secure network and avoid exposing the Tally port publicly.

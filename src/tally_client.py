@@ -407,6 +407,9 @@ GROUP_MASTER_REQUEST_TEMPLATE = """
             <FETCH>NAME</FETCH>
             <FETCH>PARENT</FETCH>
             <FETCH>PARENTNAME</FETCH>
+            <FETCH>NATUREOFGROUP</FETCH>
+            <FETCH>ISREVENUE</FETCH>
+            <FETCH>AFFECTSGROSSPROFIT</FETCH>
           </COLLECTION>
         </TDLMESSAGE>
       </TDL>
@@ -561,83 +564,65 @@ def get_parent_name(node: ET.Element) -> str:
     return name or ""
 
 
-def classify_bs_or_pnl(group_name: str, parent_name: str) -> str:
-    """Determine whether a group contributes to the Balance Sheet or P&L."""
+def classify_bs_or_pnl(is_revenue: str | None, nature: str | None) -> str:
+    """Determine whether a group contributes to Balance Sheet or P&L using Tally flags."""
 
-    group_type = classify_type(group_name, parent_name)
-    if group_type in ("Asset", "Liability"):
+    is_revenue_clean = (is_revenue or "").strip().lower()
+    if is_revenue_clean in {"yes", "y", "true"}:
+        return "P&L"
+    if is_revenue_clean in {"no", "n", "false"}:
         return "Balance Sheet"
-    return "P&L"
+
+    nature_clean = (nature or "").lower()
+    if any(token in nature_clean for token in ["income", "expense", "purchase", "sale"]):
+        return "P&L"
+    if nature_clean:
+        return "Balance Sheet"
+    return "Balance Sheet"
 
 
-def classify_type(group_name: str, parent_name: str) -> str:
-    """Classify a group as Asset, Liability, Income, or Expense."""
+def classify_type(nature: str | None, group_name: str, parent_name: str) -> str:
+    """Classify a group as Asset, Liability, Income, or Expense using Tally's nature."""
 
-    normalized = [s.lower() for s in (group_name, parent_name) if s]
+    nature_clean = (nature or "").lower()
+    if "asset" in nature_clean:
+        return "Asset"
+    if "liabilit" in nature_clean:
+        return "Liability"
+    if "income" in nature_clean or "revenue" in nature_clean or "sale" in nature_clean:
+        return "Income"
+    if "expense" in nature_clean or "purchase" in nature_clean:
+        return "Expense"
 
-    priority_map = {
-        "capital account": "Liability",
-        "reserves": "Liability",
-        "surplus": "Liability",
-        "loans (liability)": "Liability",
-        "secured loans": "Liability",
-        "unsecured loans": "Liability",
-        "current liabilities": "Liability",
-        "sundry creditors": "Liability",
-        "duties & taxes": "Liability",
-        "provisions": "Liability",
-        "bank od a/c": "Liability",
-        "suspense account": "Liability",
-        "branch/divisions": "Asset",
-        "investments": "Asset",
-        "fixed assets": "Asset",
-        "current assets": "Asset",
-        "bank accounts": "Asset",
-        "cash-in-hand": "Asset",
-        "deposits (asset)": "Asset",
-        "loans & advances (asset)": "Asset",
-        "stock-in-hand": "Asset",
-        "sundry debtors": "Asset",
-        "sales accounts": "Income",
-        "direct incomes": "Income",
-        "indirect incomes": "Income",
-        "purchases accounts": "Expense",
-        "direct expenses": "Expense",
-        "indirect expenses": "Expense",
-    }
-
-    for name in normalized:
-        for key, value in priority_map.items():
-            if key in name:
-                return value
-
-    keyword_rules = {
-        "income": "Income",
-        "revenue": "Income",
-        "expense": "Expense",
-        "purchase": "Expense",
-        "sale": "Income",
-        "asset": "Asset",
-        "liability": "Liability",
-        "capital": "Liability",
-    }
-
-    for name in normalized:
-        for key, value in keyword_rules.items():
-            if key in name:
-                return value
-
+    # Fallback: infer from parent/name keywords directly from Tally labels
+    normalized = " ".join([group_name or "", parent_name or ""]).lower()
+    if "income" in normalized or "revenue" in normalized or "sale" in normalized:
+        return "Income"
+    if "expense" in normalized or "purchase" in normalized:
+        return "Expense"
+    if "liability" in normalized:
+        return "Liability"
+    if "asset" in normalized:
+        return "Asset"
     return "Asset"
 
 
-def determine_affects_gross_profit(group_name: str, parent_name: str) -> str:
-    """Return "Yes" when the group affects gross profit."""
+def determine_affects_gross_profit(affects_gp_flag: str | None, nature: str | None, group_name: str, parent_name: str) -> str:
+    """Return "Yes" when the group affects gross profit using Tally's own flag."""
 
-    normalized = " ".join([group_name or "", parent_name or ""]).lower()
-    gross_keys = ["sales", "purchases", "direct incomes", "direct expenses"]
-    for key in gross_keys:
-        if key in normalized:
-            return "Yes"
+    flag_clean = (affects_gp_flag or "").strip().lower()
+    if flag_clean in {"yes", "y", "true"}:
+        return "Yes"
+    if flag_clean in {"no", "n", "false"}:
+        return "No"
+
+    nature_clean = (nature or "").lower()
+    if any(token in nature_clean for token in ["direct", "purchase", "sales", "sale", "trading"]):
+        return "Yes"
+
+    labels = " ".join([group_name or "", parent_name or ""]).lower()
+    if any(token in labels for token in ["sales", "sale", "purchase", "direct income", "direct expense"]):
+        return "Yes"
     return "No"
 
 
@@ -656,9 +641,13 @@ def _parse_group_master(raw: str) -> List[Dict[str, str | float | bool]]:
             continue
 
         parent = get_parent_name(group)
-        bs_or_pnl = classify_bs_or_pnl(name, parent)
-        gtype = classify_type(name, parent)
-        affects_gp = determine_affects_gross_profit(name, parent)
+        nature = _first_non_empty([group.findtext("NATUREOFGROUP"), group.get("NATUREOFGROUP")])
+        is_revenue = _first_non_empty([group.findtext("ISREVENUE"), group.get("ISREVENUE")])
+        affects_gp_flag = _first_non_empty([group.findtext("AFFECTSGROSSPROFIT"), group.get("AFFECTSGROSSPROFIT")])
+
+        bs_or_pnl = classify_bs_or_pnl(is_revenue, nature)
+        gtype = classify_type(nature, name, parent)
+        affects_gp = determine_affects_gross_profit(affects_gp_flag, nature, name, parent)
 
         rows.append(
             {
