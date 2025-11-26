@@ -257,6 +257,76 @@ def _compute_cogs(tb_df: pd.DataFrame, opening_stock: float, closing_stock: floa
     return float(opening_stock) + purchases - float(closing_stock)
 
 
+def _sum_ytd_nett(
+    tb_df: pd.DataFrame,
+    affects_gp: str,
+    ledger_type: str,
+    exclude_groups: set[str] | None = None,
+) -> float:
+    """Sum Nett YTD for rows matching filters (for YTD overview KPIs)."""
+
+    if tb_df is None or tb_df.empty:
+        return 0.0
+
+    affects_norm = affects_gp.lower()
+    type_norm = ledger_type.lower()
+    exclude_norm = {g.casefold() for g in exclude_groups} if exclude_groups else set()
+
+    filtered = tb_df[
+        (tb_df["AffectsGrossProfit"].astype(str).str.lower() == affects_norm)
+        & (tb_df["Type"].astype(str).str.lower() == type_norm)
+    ]
+
+    if exclude_norm:
+        filtered = filtered[
+            ~filtered["GroupName"].astype(str).str.casefold().isin(exclude_norm)
+        ]
+
+    if "Nett YTD" not in filtered:
+        return 0.0
+
+    return float(filtered["Nett YTD"].astype(float).sum())
+
+
+def _render_ytd_overview_cards(tb_df: pd.DataFrame, opening_stock: float, closing_stock: float):
+    """Render revenue/expense/profit overview cards derived from the YTD trial balance."""
+
+    revenue = -_sum_ytd_nett(tb_df, "yes", "income")
+    direct_expense = _sum_ytd_nett(tb_df, "yes", "expense", exclude_groups={"Purchase Accounts"})
+
+    purchase_mask = tb_df["GroupName"].astype(str).str.casefold() == "purchase accounts".casefold()
+    purchases_ytd = 0.0
+    if "Nett YTD" in tb_df:
+        purchases_ytd = float(tb_df.loc[purchase_mask, "Nett YTD"].astype(float).sum())
+
+    cogs = float(opening_stock) + purchases_ytd - float(closing_stock)
+    gross_profit = revenue - direct_expense - cogs
+
+    indirect_expense = _sum_ytd_nett(tb_df, "no", "expense")
+    indirect_income = -_sum_ytd_nett(tb_df, "no", "income")
+    net_profit = gross_profit + indirect_income - indirect_expense
+
+    cards = st.columns(3, gap="large")
+    with cards[0]:
+        _render_kpi("Revenue (Direct) YTD", revenue)
+    with cards[1]:
+        _render_kpi("Expense (Direct) YTD", direct_expense)
+    with cards[2]:
+        _render_kpi("COGS (YTD)", cogs)
+
+    cards2 = st.columns(3, gap="large")
+    with cards2[0]:
+        _render_kpi("Gross Profit (YTD)", gross_profit)
+    with cards2[1]:
+        _render_kpi("Income (Indirect) YTD", indirect_income)
+    with cards2[2]:
+        _render_kpi("Expense (Indirect) YTD", indirect_expense)
+
+    cards3 = st.columns(1)
+    with cards3[0]:
+        _render_kpi("Net Profit (YTD)", net_profit)
+
+
 def _render_overview_cards(tb_df: pd.DataFrame, opening_stock: float, closing_stock: float):
     """Render revenue/expense/profit overview cards derived from the dynamic trial balance."""
 
@@ -343,7 +413,7 @@ def main() -> None:
     tb_to = st.session_state.get("tb_to")
     user_ob_input: float | None = st.session_state.get("user_ob_input")
     user_cb_input: float | None = st.session_state.get("user_cb_input")
-    static_tb_df: pd.DataFrame | None = st.session_state.get("static_tb_df")
+    ytd_tb_df: pd.DataFrame | None = st.session_state.get("ytd_tb_df")
 
     if overview_vouchers is None:
         overview_vouchers = _voucher_dataframe(_sample_vouchers())
@@ -430,6 +500,9 @@ def main() -> None:
     tb_to = st.session_state.get("tb_to") or tb_to
     user_ob_input = st.session_state.get("user_ob_input") or user_ob_input or 0.0
     user_cb_input = st.session_state.get("user_cb_input") or user_cb_input or 0.0
+    ytd_tb_state = st.session_state.get("ytd_tb_df")
+    if ytd_tb_state is not None:
+        ytd_tb_df = ytd_tb_state
     # Preserve the existing overview vouchers; avoid truthiness on DataFrame which raises ValueError
     overview_vouchers_state = st.session_state.get("overview_vouchers_df")
     if overview_vouchers_state is not None:
@@ -465,37 +538,45 @@ def main() -> None:
         st.markdown("</div>", unsafe_allow_html=True)
 
         st.markdown("<div class='app-shell'>", unsafe_allow_html=True)
-        st.subheader("Static Trial Balance")
+        st.subheader("YTD Trial Balance")
         if overview_vouchers is None or overview_vouchers.empty:
-            st.info("Load the full Day Book to compute the static trial balance.")
+            st.info("Load the full Day Book to compute the YTD trial balance.")
         elif company:
-            if st.button("Build Static Trial Balance", type="primary"):
-                with st.spinner("Computing static trial balance..."):
+            if st.button("Build YTD Trial Balance", type="primary"):
+                with st.spinner("Computing YTD trial balance..."):
                     try:
-                        static_tb_df = _build_static_trial_balance(
+                        ytd_tb_df = _build_ytd_trial_balance(
                             company, host, int(port), overview_vouchers
                         )
                     except Exception as exc:
-                        st.error(f"Failed to build static trial balance: {exc}")
+                        st.error(f"Failed to build YTD trial balance: {exc}")
                     else:
-                        st.session_state.static_tb_df = static_tb_df
-                        st.success(f"Static trial balance ready ({len(static_tb_df):,} ledgers)")
+                        st.session_state.ytd_tb_df = ytd_tb_df
+                        st.success(f"YTD trial balance ready ({len(ytd_tb_df):,} ledgers)")
         else:
-            st.info("Select a company to compute the static trial balance.")
+            st.info("Select a company to compute the YTD trial balance.")
 
-        if static_tb_df is not None and not static_tb_df.empty:
+        if ytd_tb_df is not None and not ytd_tb_df.empty:
             st.download_button(
-                label="Download Static Trial Balance (Excel)",
-                data=_to_excel_bytes(static_tb_df),
-                file_name=f"Static_Trial_Balance_{company or 'Sample'}.xlsx",
+                label="Download YTD Trial Balance (Excel)",
+                data=_to_excel_bytes(ytd_tb_df),
+                file_name=f"YTD_Trial_Balance_{company or 'Sample'}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
             st.dataframe(
-                static_tb_df.style.format(precision=2),
+                ytd_tb_df.style.format(precision=2),
                 use_container_width=True,
                 height=480,
             )
         st.markdown("</div>", unsafe_allow_html=True)
+
+        if ytd_tb_df is not None and not ytd_tb_df.empty:
+            st.markdown("<div class='app-shell'>", unsafe_allow_html=True)
+            st.subheader("Performance Overview (YTD)")
+            opening_stock_val = float(user_ob_input or 0.0)
+            closing_stock_val = float(user_cb_input or 0.0)
+            _render_ytd_overview_cards(ytd_tb_df, opening_stock_val, closing_stock_val)
+            st.markdown("</div>", unsafe_allow_html=True)
 
         if tb_df is not None and not tb_df.empty:
             st.markdown("<div class='app-shell'>", unsafe_allow_html=True)
@@ -640,16 +721,19 @@ def _build_dynamic_trial_balance(
     return tb_df, voucher_df
 
 
-def _build_static_trial_balance(
+def _build_ytd_trial_balance(
     company: str, host: str, port: int, voucher_df: pd.DataFrame
 ) -> pd.DataFrame:
-    """Compute a static trial balance using full Day Book movements."""
+    """Compute a YTD trial balance using full Day Book movements."""
 
     if voucher_df is None or voucher_df.empty:
         raise RuntimeError("Day Book is empty; load vouchers first.")
 
     ledger_rows = _load_ledger_master(company, host, port, None, None)
     group_rows = _load_group_master(company, host, port, None, None)
+
+    voucher_df = voucher_df.copy()
+    voucher_df["Nett"] = voucher_df["Nett"].astype(float)
 
     ledger_parent_map = {row["LedgerName"]: row["LedgerParent"] for row in ledger_rows}
     ledger_opening_map = {row["LedgerName"]: row["OpeningBalanceNormalized"] for row in ledger_rows}
@@ -665,7 +749,8 @@ def _build_static_trial_balance(
         gtype = group_info.get("Type", "")
         affects_gp = group_info.get("AffectsGrossProfit", "")
 
-        closing = opening + nets_total.get(ledger_name, 0.0)
+        nett_ytd = nets_total.get(ledger_name, 0.0)
+        closing = opening + nett_ytd
 
         rows.append(
             {
@@ -676,7 +761,8 @@ def _build_static_trial_balance(
                 "Type": gtype,
                 "AffectsGrossProfit": affects_gp,
                 "OpeningBalance": opening,
-                "StaticClosing": closing,
+                "Nett YTD": nett_ytd,
+                "YTDCLB": closing,
             }
         )
 
