@@ -645,6 +645,52 @@ def _statement_from_tb(tb_df: pd.DataFrame, statement: str) -> pd.DataFrame:
 
         return pd.DataFrame(lines)
 
+    if statement_norm in {"balance sheet", "balance", "bs"}:
+        if "DynamicClosing" not in tb_df.columns:
+            return pd.DataFrame()
+
+        def bs_amount(row: pd.Series) -> float:
+            raw = float(row.get("DynamicClosing", 0.0) or 0.0)
+            t_val = str(row.get("Type", "")).lower()
+            # Show assets as positive figures and liabilities as positive by
+            # flipping their credit-balance sign for readability.
+            if t_val == "liability":
+                return -raw
+            return raw
+
+        bs_pnl = tb_df.get("BS_or_PnL", pd.Series(dtype=str)).astype(str).str.lower()
+        mask = bs_pnl.str.contains("balance") | bs_pnl.str.contains("bs")
+
+        if not mask.any():
+            mask = tb_df["Type"].astype(str).str.lower().isin(["asset", "liability"])
+
+        bs_df = tb_df.loc[mask].copy()
+        bs_df["DisplayAmount"] = bs_df.apply(bs_amount, axis=1)
+
+        def summarize(section_mask: pd.Series) -> pd.DataFrame:
+            section = bs_df.loc[section_mask]
+            if section.empty:
+                return pd.DataFrame()
+            grp = (section.groupby("GroupName")["DisplayAmount"].sum().reset_index().sort_values("GroupName"))
+            grp["Line"] = "· " + grp["GroupName"].astype(str)
+            grp["Amount"] = grp["DisplayAmount"]
+            return grp[["Line", "Amount"]]
+
+        asset_mask = bs_df["Type"].astype(str).str.lower() == "asset"
+        liability_mask = bs_df["Type"].astype(str).str.lower() == "liability"
+
+        assets_total = bs_df.loc[asset_mask, "DisplayAmount"].sum()
+        liabilities_total = bs_df.loc[liability_mask, "DisplayAmount"].sum()
+
+        lines: list[dict[str, float | str]] = []
+        lines.append({"Line": "Assets", "Amount": assets_total})
+        lines.extend(summarize(asset_mask).to_dict(orient="records"))
+        lines.append({"Line": "Liabilities & Equity", "Amount": liabilities_total})
+        lines.extend(summarize(liability_mask).to_dict(orient="records"))
+        lines.append({"Line": "Total (Assets - Liabilities)", "Amount": assets_total - liabilities_total})
+
+        return pd.DataFrame(lines)
+
     bs_pnl = tb_df.get("BS_or_PnL", pd.Series(dtype=str)).astype(str).str.lower()
 
     if statement_norm == "p&l":
