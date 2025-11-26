@@ -337,15 +337,16 @@ def main() -> None:
     if companies:
         company = st.sidebar.selectbox("Company", companies)
 
-    vouchers_df: pd.DataFrame | None = st.session_state.get("vouchers_df")
+    overview_vouchers: pd.DataFrame | None = st.session_state.get("overview_vouchers_df")
     tb_df = st.session_state.get("tb_df")
     tb_from = st.session_state.get("tb_from")
     tb_to = st.session_state.get("tb_to")
     user_ob_input: float | None = st.session_state.get("user_ob_input")
     user_cb_input: float | None = st.session_state.get("user_cb_input")
 
-    if vouchers_df is None:
-        vouchers_df = _voucher_dataframe(_sample_vouchers())
+    if overview_vouchers is None:
+        overview_vouchers = _voucher_dataframe(_sample_vouchers())
+        st.session_state.overview_vouchers_df = overview_vouchers
 
     overview_tab, table_tab = st.tabs(["Overview", "Table"])
 
@@ -382,14 +383,14 @@ def main() -> None:
             else:
                 with st.spinner("Computing dynamic trial balance..."):
                     try:
-                        tb_df, vouchers_df = _build_dynamic_trial_balance(
+                        tb_df, tb_vouchers = _build_dynamic_trial_balance(
                             company, host, int(port), tb_from, tb_to
                         )
                     except Exception as exc:
                         st.error(f"Failed to build trial balance: {exc}")
                     else:
                         st.session_state.tb_df = tb_df
-                        st.session_state.vouchers_df = vouchers_df
+                        st.session_state.tb_vouchers_df = tb_vouchers
                         st.session_state.tb_from = tb_from
                         st.session_state.tb_to = tb_to
                         st.session_state.user_ob_input = float(user_ob_input or 0.0)
@@ -424,11 +425,11 @@ def main() -> None:
 
     # Refresh local variables from session state after processing inputs
     tb_df = st.session_state.get("tb_df")
-    vouchers_df = st.session_state.get("vouchers_df") or vouchers_df
     tb_from = st.session_state.get("tb_from") or tb_from
     tb_to = st.session_state.get("tb_to") or tb_to
     user_ob_input = st.session_state.get("user_ob_input") or user_ob_input or 0.0
     user_cb_input = st.session_state.get("user_cb_input") or user_cb_input or 0.0
+    overview_vouchers = st.session_state.get("overview_vouchers_df") or overview_vouchers
 
     with overview_tab:
         st.markdown("<div class='app-shell'>", unsafe_allow_html=True)
@@ -438,27 +439,27 @@ def main() -> None:
                 with st.spinner("Fetching full Day Book..."):
                     try:
                         vouchers = _load_daybook(company, host, int(port), None, None)
-                        vouchers_df = _voucher_dataframe(vouchers)
+                        overview_vouchers = _voucher_dataframe(vouchers)
                     except Exception as exc:
                         st.error(f"Failed to load Day Book: {exc}")
                     else:
-                        st.session_state.vouchers_df = vouchers_df
-                        st.success(f"Loaded {len(vouchers_df):,} voucher lines")
+                        st.session_state.overview_vouchers_df = overview_vouchers
+                        st.success(f"Loaded {len(overview_vouchers):,} voucher lines")
         else:
             st.info("Select a company to load the Day Book.")
 
-        if vouchers_df is not None and not vouchers_df.empty:
+        if overview_vouchers is not None and not overview_vouchers.empty:
             st.caption(
-                f"Voucher nett total: {vouchers_df['Nett'].sum():,.2f} (should be 0.00 if balanced)"
+                f"Voucher nett total: {overview_vouchers['Nett'].sum():,.2f} (should be 0.00 if balanced)"
             )
             st.download_button(
                 label="Download Voucher Details (Excel)",
-                data=_to_excel_bytes(vouchers_df),
+                data=_to_excel_bytes(overview_vouchers),
                 file_name=f"Day_Book_{company or 'Sample'}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
             st.dataframe(
-                vouchers_df.style.format({"Debit": "{:.2f}", "Credit": "{:.2f}", "Nett": "{:.2f}"}),
+                overview_vouchers.style.format({"Debit": "{:.2f}", "Credit": "{:.2f}", "Nett": "{:.2f}"}),
                 use_container_width=True,
                 height=420,
             )
@@ -471,7 +472,7 @@ def main() -> None:
             closing_stock_val = float(user_cb_input or 0.0)
 
             _render_overview_cards(tb_df, opening_stock_val, closing_stock_val)
-            _render_monthly_revenue_chart(vouchers_df)
+            _render_monthly_revenue_chart(overview_vouchers)
             st.markdown("</div>", unsafe_allow_html=True)
         else:
             st.info("Select a company to compute the dynamic trial balance.")
