@@ -551,6 +551,43 @@ def _render_ytd_overview_cards(tb_df: pd.DataFrame, opening_stock: float, closin
     return selected
 
 
+def _statement_from_tb(tb_df: pd.DataFrame, statement: str) -> pd.DataFrame:
+    """Return a P&L or Balance Sheet slice from the dynamic trial balance."""
+
+    if tb_df is None or tb_df.empty:
+        return pd.DataFrame()
+
+    statement_norm = statement.lower()
+    bs_pnl = tb_df.get("BS_or_PnL", pd.Series(dtype=str)).astype(str).str.lower()
+
+    if statement_norm == "p&l":
+        mask = bs_pnl.str.contains("p&l") | bs_pnl.str.contains("profit")
+    else:
+        mask = bs_pnl.str.contains("balance") | bs_pnl.str.contains("bs")
+
+    # Fallback: if BS/P&L flag is missing, fall back to Type classification.
+    if not mask.any():
+        if statement_norm == "p&l":
+            mask = tb_df["Type"].astype(str).str.lower().isin(["income", "expense"])
+        else:
+            mask = tb_df["Type"].astype(str).str.lower().isin(["asset", "liability"])
+
+    cols = [
+        "LedgerName",
+        "GroupName",
+        "ParentName",
+        "BS_or_PnL",
+        "Type",
+        "AffectsGrossProfit",
+        "DynamicOpening",
+        "T2Dynamic CLB",
+        "DynamicClosing",
+    ]
+
+    present_cols = [c for c in cols if c in tb_df.columns]
+    return tb_df.loc[mask, present_cols].sort_values(["GroupName", "LedgerName"]).reset_index(drop=True)
+
+
 def main() -> None:
     st.sidebar.header("Tally Connection")
     host = st.sidebar.text_input("Host", value="127.0.0.1")
@@ -649,13 +686,35 @@ def main() -> None:
                 file_name=f"Dynamic_Trial_Balance_{company}_{from_label}_{to_label}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
-            st.dataframe(
-                current_tb.style.format(precision=2),
-                use_container_width=True,
-                height=520,
-            )
+            st.caption("Dynamic trial balance is hidden; download to view details.")
         else:
-            st.info("Fetch the dynamic trial balance to view the table.")
+            st.info("Fetch the dynamic trial balance to enable downloads and statements.")
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        st.markdown("<div class='app-shell'>", unsafe_allow_html=True)
+        st.subheader("Statements")
+        current_tb = st.session_state.get("tb_df")
+        col_pl, col_bs = st.columns(2)
+        show_pl = col_pl.button("Show Profit & Loss", type="secondary")
+        show_bs = col_bs.button("Show Balance Sheet", type="secondary")
+
+        if current_tb is None or current_tb.empty:
+            st.info("Build the dynamic trial balance first to view statements.")
+        else:
+            if show_pl:
+                pl_df = _statement_from_tb(current_tb, "p&l")
+                if pl_df.empty:
+                    st.warning("No Profit & Loss rows found in the dynamic trial balance.")
+                else:
+                    st.dataframe(pl_df.style.format(precision=2), use_container_width=True, height=480)
+
+            if show_bs:
+                bs_df = _statement_from_tb(current_tb, "balance")
+                if bs_df.empty:
+                    st.warning("No Balance Sheet rows found in the dynamic trial balance.")
+                else:
+                    st.dataframe(bs_df.style.format(precision=2), use_container_width=True, height=480)
+
         st.markdown("</div>", unsafe_allow_html=True)
 
     # Refresh local variables from session state after processing inputs
