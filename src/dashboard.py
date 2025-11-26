@@ -308,12 +308,6 @@ def main() -> None:
                 "Closing stock for the period", value=0.0, step=1000.0, format="%.2f"
             )
 
-        stock_display = st.columns(2)
-        with stock_display[0]:
-            _render_kpi("Opening stock for the period", opening_stock_input)
-        with stock_display[1]:
-            _render_kpi("Closing stock for the period", closing_stock_input)
-
         _render_overview_cards(tb_df, opening_stock_input, closing_stock_input)
     else:
         st.info("Select a company to compute the dynamic trial balance.")
