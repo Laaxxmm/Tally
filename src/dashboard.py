@@ -9,7 +9,13 @@ import pandas as pd
 import streamlit as st
 
 from analytics import summarize
-from tally_client import fetch_companies, fetch_daybook, fetch_group_master, fetch_ledger_master
+from tally_client import (
+    _fiscal_year_start,
+    fetch_companies,
+    fetch_daybook,
+    fetch_group_master,
+    fetch_ledger_master,
+)
 
 
 st.set_page_config(page_title="Tally MIS Dashboard", layout="wide")
@@ -177,6 +183,7 @@ def main() -> None:
                         st.dataframe(
                             tb_df.style.format(
                                 {
+                                    "T2Dynamic OB": "₹{:,.2f}",
                                     "DynamicOpening": "₹{:,.2f}",
                                     "DynamicClosing": "₹{:,.2f}",
                                     "OpeningBalance": "₹{:,.2f}",
@@ -270,10 +277,14 @@ def _build_dynamic_trial_balance(company: str, host: str, port: int, from_date: 
     voucher_df["Date"] = pd.to_datetime(voucher_df["Date"]).dt.date
     voucher_df["Nett"] = voucher_df["Nett"].astype(float)
 
-    before_mask = voucher_df["Date"] < from_date
+    # Restrict Day Book movements to the fiscal year that aligns with the ledger openings.
+    fiscal_start = _fiscal_year_start(from_date)
+    voucher_df = voucher_df[voucher_df["Date"] >= fiscal_start]
+
+    t2_mask = (voucher_df["Date"] >= fiscal_start) & (voucher_df["Date"] < from_date)
     in_range_mask = (voucher_df["Date"] >= from_date) & (voucher_df["Date"] <= to_date)
 
-    nets_before = voucher_df.loc[before_mask].groupby("Ledger")["Nett"].sum()
+    nets_t2 = voucher_df.loc[t2_mask].groupby("Ledger")["Nett"].sum()
     nets_in_range = voucher_df.loc[in_range_mask].groupby("Ledger")["Nett"].sum()
 
     rows = []
@@ -284,10 +295,10 @@ def _build_dynamic_trial_balance(company: str, host: str, port: int, from_date: 
         gtype = group_info.get("Type", "")
         affects_gp = group_info.get("AffectsGrossProfit", "")
 
-        pre_net = nets_before.get(ledger_name, 0.0)
+        t2_dynamic_ob = nets_t2.get(ledger_name, 0.0)
         in_range_net = nets_in_range.get(ledger_name, 0.0)
 
-        dynamic_opening = opening + pre_net
+        dynamic_opening = opening + t2_dynamic_ob
         dynamic_closing = dynamic_opening + in_range_net
 
         rows.append(
@@ -299,6 +310,7 @@ def _build_dynamic_trial_balance(company: str, host: str, port: int, from_date: 
                 "Type": gtype,
                 "AffectsGrossProfit": affects_gp,
                 "OpeningBalance": opening,
+                "T2Dynamic OB": t2_dynamic_ob,
                 "DynamicOpening": dynamic_opening,
                 "DynamicClosing": dynamic_closing,
             }
