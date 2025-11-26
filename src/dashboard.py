@@ -19,8 +19,119 @@ from tally_client import (
 
 
 st.set_page_config(page_title="Tally MIS Dashboard", layout="wide")
-st.title("📊 Tally MIS Dashboard")
-st.caption("Connects to Tally over 127.0.0.1:9000 to present client-ready KPIs.")
+
+
+def _inject_theme():
+    """Inject a simple navy/grey/red theme and typography tweaks."""
+
+    st.markdown(
+        """
+        <style>
+            :root {
+                --navy: #0b1f3a;
+                --navy-light: #15294d;
+                --grey: #f3f4f6;
+                --grey-mid: #d6d9de;
+                --red: #e74c3c;
+                --card-radius: 14px;
+                --shadow: 0 10px 25px rgba(0,0,0,0.08);
+                --text: #1c1f26;
+                --muted: #6b7280;
+                --font: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+            }
+
+            html, body, [class^="st-"], [class^="css"]  {
+                font-family: var(--font);
+            }
+
+            .stApp {
+                background: linear-gradient(180deg, #f7f8fb 0%, #eef1f6 35%, #e6e9ef 100%);
+                color: var(--text);
+            }
+
+            .app-shell {
+                background: white;
+                padding: 18px 22px;
+                border-radius: var(--card-radius);
+                box-shadow: var(--shadow);
+                border: 1px solid var(--grey-mid);
+                margin-bottom: 14px;
+            }
+
+            .app-header {
+                display: flex;
+                align-items: center;
+                gap: 14px;
+                padding: 6px 0 14px 0;
+            }
+
+            .logo-chip {
+                font-weight: 800;
+                letter-spacing: 0.5px;
+                color: white;
+                background: linear-gradient(135deg, var(--navy), var(--navy-light));
+                padding: 10px 14px;
+                border-radius: 12px;
+                box-shadow: var(--shadow);
+                font-size: 18px;
+            }
+
+            .title-block small {
+                color: var(--muted);
+                font-size: 13px;
+            }
+
+            .metric-card {
+                background: white;
+                border-radius: var(--card-radius);
+                border: 1px solid var(--grey-mid);
+                box-shadow: var(--shadow);
+                padding: 14px 16px;
+            }
+
+            .metric-label {
+                color: var(--muted);
+                font-size: 13px;
+                margin-bottom: 4px;
+            }
+
+            .metric-value {
+                color: var(--navy);
+                font-size: 22px;
+                font-weight: 700;
+            }
+
+            .metric-accent {
+                color: var(--red);
+            }
+
+            .download-card {
+                background: white;
+                border-radius: var(--card-radius);
+                border: 1px solid var(--grey-mid);
+                box-shadow: var(--shadow);
+                padding: 16px;
+            }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+_inject_theme()
+
+st.markdown(
+    """
+    <div class="app-header">
+        <div class="logo-chip">Indefine.</div>
+        <div class="title-block">
+            <div style="font-size:22px; font-weight:700; color:var(--navy);">Tally Performance Dashboard</div>
+            <small>Client-friendly KPIs, dynamic trial balance, and exports</small>
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
 
 @st.cache_data(show_spinner=False)
@@ -80,12 +191,18 @@ def _build_group_excel(company: str, host: str, port: int):
     return buffer.read(), len(df)
 
 
-def _render_kpi(label: str, value: float, delta: float | None = None):
-    formatted_value = f"₹{value:,.2f}"
-    if delta is not None:
-        st.metric(label, formatted_value, f"₹{delta:,.2f}")
-    else:
-        st.metric(label, formatted_value)
+def _render_kpi(label: str, value: float, accent: bool = False):
+    """Render a lightly styled KPI card with two-decimal formatting."""
+
+    st.markdown(
+        f"""
+        <div class="metric-card">
+            <div class="metric-label">{label}</div>
+            <div class="metric-value{' metric-accent' if accent else ''}">₹{value:,.2f}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def _sum_t2clb(
@@ -204,15 +321,17 @@ def main() -> None:
     ledger_map = _default_ledger_map()
     snapshot = summarize(vouchers, ledger_map)
 
+    st.markdown("<div class='app-shell'>", unsafe_allow_html=True)
     kpi_cols = st.columns(3)
     with kpi_cols[0]:
         _render_kpi("Revenue", snapshot.revenue)
     with kpi_cols[1]:
-        _render_kpi("Profit / Loss", snapshot.profit_loss)
+        _render_kpi("Profit / Loss", snapshot.profit_loss, accent=snapshot.profit_loss < 0)
     with kpi_cols[2]:
         _render_kpi("Gross Margin", snapshot.gross_margin)
+    st.markdown("</div>", unsafe_allow_html=True)
 
-    st.markdown("---")
+    st.markdown("<div class='app-shell'>", unsafe_allow_html=True)
     col1, col2 = st.columns(2)
 
     with col1:
@@ -229,16 +348,23 @@ def main() -> None:
     with col2:
         st.subheader("Top Products / Services")
         st.table(pd.DataFrame(snapshot.best_sellers, columns=["Ledger", "Revenue"]))
+    st.markdown("</div>", unsafe_allow_html=True)
 
-    st.markdown("---")
-    st.subheader("Voucher Details")
+    st.markdown("<div class='app-shell'>", unsafe_allow_html=True)
+    st.subheader("Voucher Export")
     voucher_df = _voucher_dataframe(vouchers)
-    st.dataframe(voucher_df, use_container_width=True)
     st.caption(
         f"Voucher nett total: {voucher_df['Nett'].sum():,.2f} (should be 0.00 if balanced)"
     )
+    st.download_button(
+        label="Download Voucher Details (Excel)",
+        data=_to_excel_bytes(voucher_df),
+        file_name=f"Day_Book_{company or 'Sample'}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    st.markdown("</div>", unsafe_allow_html=True)
 
-    st.markdown("---")
+    st.markdown("<div class='app-shell'>", unsafe_allow_html=True)
     st.subheader("Dynamic Trial Balance")
     fetch_tb = False
     user_ob_input: float | None = None
@@ -276,36 +402,26 @@ def main() -> None:
                         f"User-supplied opening stock: {user_ob_input:,.2f} · "
                         f"User-supplied closing stock: {user_cb_input:,.2f}"
                     )
-                    st.dataframe(
-                        tb_df.style.format(
-                            {
-                                "T2Dynamic OB": "₹{:,.2f}",
-                                "DynamicOpening": "₹{:,.2f}",
-                                "T2Dynamic CLB": "₹{:,.2f}",
-                                "DynamicClosing": "₹{:,.2f}",
-                                "OpeningBalance": "₹{:,.2f}",
-                            }
-                        ),
-                        use_container_width=True,
-                    )
                     st.download_button(
                         label="Download Dynamic Trial Balance (Excel)",
                         data=_to_excel_bytes(tb_df),
                         file_name=f"Dynamic_Trial_Balance_{company}_{tb_from}_{tb_to}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     )
+    st.markdown("</div>", unsafe_allow_html=True)
 
     if tb_df is not None and not tb_df.empty:
-        st.markdown("---")
+        st.markdown("<div class='app-shell'>", unsafe_allow_html=True)
         st.subheader("Performance Overview (Dynamic)")
         opening_stock_val = user_ob_input or 0.0
         closing_stock_val = user_cb_input or 0.0
 
         _render_overview_cards(tb_df, opening_stock_val, closing_stock_val)
+        st.markdown("</div>", unsafe_allow_html=True)
     else:
         st.info("Select a company to compute the dynamic trial balance.")
 
-    st.markdown("---")
+    st.markdown("<div class='app-shell'>", unsafe_allow_html=True)
     st.subheader("Chart of Accounts (Download Only)")
     if company:
         col_a, col_b = st.columns(2)
@@ -341,6 +457,7 @@ def main() -> None:
                         )
     else:
         st.info("Select a company to download its ledger and group lists.")
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
 def _voucher_dataframe(vouchers):
