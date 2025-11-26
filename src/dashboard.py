@@ -227,13 +227,24 @@ def main() -> None:
 
     st.markdown("---")
     st.subheader("Dynamic Trial Balance")
+    fetch_tb = False
+    user_ob_input: float | None = None
+    user_cb_input: float | None = None
     if company:
-        tb_col1, tb_col2, tb_col3 = st.columns([1, 1, 1])
+        tb_col1, tb_col2, tb_col3, tb_col4, tb_col5 = st.columns([1, 1, 1, 1, 1])
         with tb_col1:
             tb_from = st.date_input("From date", value=date.today() - timedelta(days=30))
         with tb_col2:
             tb_to = st.date_input("To date", value=date.today())
         with tb_col3:
+            user_ob_input = st.number_input(
+                "Opening balance (user input)", value=0.0, step=1000.0, format="%.2f"
+            )
+        with tb_col4:
+            user_cb_input = st.number_input(
+                "Closing balance (user input)", value=0.0, step=1000.0, format="%.2f"
+            )
+        with tb_col5:
             st.write("\n")
             fetch_tb = st.button("Fetch Dynamic Trial Balance", type="primary")
 
@@ -248,6 +259,10 @@ def main() -> None:
                     st.error(f"Failed to build trial balance: {exc}")
                 else:
                     st.success(f"Dynamic trial balance ready ({len(tb_df):,} ledgers)")
+                    st.caption(
+                        f"User-supplied opening balance: {user_ob_input:,.2f} · "
+                        f"User-supplied closing balance: {user_cb_input:,.2f}"
+                    )
                     st.dataframe(
                         tb_df.style.format(
                             {
