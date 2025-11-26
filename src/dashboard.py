@@ -8,7 +8,7 @@ import pandas as pd
 import streamlit as st
 
 from analytics import summarize
-from tally_client import fetch_companies, fetch_daybook
+from tally_client import fetch_companies, fetch_daybook, fetch_ledgers
 
 
 st.set_page_config(page_title="Tally MIS Dashboard", layout="wide")
@@ -24,6 +24,11 @@ def _load_companies(host: str, port: int):
 @st.cache_data(show_spinner=False)
 def _load_data(company: str, start: date, end: date, host: str, port: int):
     return fetch_daybook(company, start, end, host, port)
+
+
+@st.cache_data(show_spinner=False)
+def _load_ledgers(company: str, host: str, port: int):
+    return fetch_ledgers(company, host, port)
 
 
 def _render_kpi(label: str, value: float, delta: float | None = None):
@@ -112,6 +117,26 @@ def main() -> None:
     st.caption(
         f"Voucher nett total: {voucher_df['Nett'].sum():,.2f} (should be 0.00 if balanced)"
     )
+
+    st.markdown("---")
+    st.subheader("Chart of Accounts (Download Only)")
+    if company:
+        if st.button("Download Ledgers", type="primary"):
+            with st.spinner("Fetching ledgers from Tally..."):
+                ledger_rows = _load_ledgers(company, host, int(port))
+                if ledger_rows:
+                    ledger_df = pd.DataFrame(ledger_rows)
+                    st.success(f"Loaded {len(ledger_df):,} ledgers")
+                    st.download_button(
+                        label="Download Ledger List",
+                        data=ledger_df.to_csv(index=False).encode(),
+                        file_name=f"Ledger_List_{company}.csv",
+                        mime="text/csv",
+                    )
+                else:
+                    st.warning("No ledgers returned. Ensure the company is open in Tally.")
+    else:
+        st.info("Select a company to download its ledger list.")
 
 
 def _voucher_dataframe(vouchers):

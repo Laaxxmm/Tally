@@ -115,13 +115,11 @@ def fetch_ledgers(
     start: date | None = None,
     end: date | None = None,
 ) -> List[Dict[str, str | float]]:
-    """Return master ledger groupings and opening balances.
+    """Return a simple chart-of-accounts ledger extract.
 
-    The current extract focuses on ledger masters only: ledger name, parent
-    group, the parent's nature (e.g., Assets, Liabilities, Income, Expense),
-    whether that nature flows to the Balance Sheet or Profit & Loss, and the
-    opening balance. Date parameters are accepted for API compatibility but are
-    not used because this view is master-data oriented.
+    The extract mirrors Tally's ledger view: ledger name, parent (Under), and
+    opening balance. Date parameters are accepted for interface compatibility
+    but are not used because this is purely master data.
     """
 
     xml_basic = f"""
@@ -141,7 +139,6 @@ def fetch_ledgers(
             <FETCH>Name</FETCH>
             <FETCH>Parent</FETCH>
             <FETCH>OpeningBalance</FETCH>
-            <FETCH>IsBillWiseOn</FETCH>
           </COLLECTION>
         </TDLMESSAGE>
       </TDL>
@@ -150,88 +147,30 @@ def fetch_ledgers(
 </ENVELOPE>
 """
     raw_basic = _clean_tally_xml(_post_xml(xml_basic, host, port))
-    ledgers: Dict[str, Dict[str, str | float]] = {}
+    rows: List[Dict[str, str | float]] = []
     try:
         root_basic = ET.fromstring(raw_basic)
         for ledger in root_basic.findall(".//LEDGER"):
             name = (ledger.get("NAME") or "").strip()
             if not name:
                 continue
-            parent = (ledger.findtext("PARENT", default="") or ledger.get("PARENT", "")).strip()
-            opening = _to_float(ledger.findtext("OPENINGBALANCE", "0"))
-            ledgers[name] = {
-                "Parent": parent,
-                "Opening Balance": opening,
-            }
+            parent = (
+                ledger.findtext("PARENT", default="")
+                or ledger.get("PARENT", "")
+                or "(None)"
+            ).strip()
+            opening = round(_to_float(ledger.findtext("OPENINGBALANCE", "0")), 2)
+            rows.append(
+                {
+                    "Ledger Name": name,
+                    "Under": parent,
+                    "Opening Balance": opening,
+                }
+            )
     except ET.ParseError:
         return []
 
-    group_nature = _fetch_group_nature(company_name, host, port)
-
-    def statement_for(nature: str) -> str:
-        lowered = nature.lower()
-        if lowered in {"income", "expense"}:
-            return "Profit & Loss"
-        if lowered in {"assets", "liabilities"}:
-            return "Balance Sheet"
-        return "(Unknown)"
-
-    rows: List[Dict[str, str | float]] = []
-    for name, values in sorted(ledgers.items()):
-        parent = values.get("Parent", "")
-        nature = group_nature.get(parent, "")
-        rows.append(
-            {
-                "Ledger Name": name,
-                "Parent Group": parent,
-                "Group Nature": nature or "(Unknown)",
-                "Statement": statement_for(nature) if nature else "(Unknown)",
-                "Opening Balance": round(values.get("Opening Balance", 0.0), 2),
-            }
-        )
-
-    return rows
-
-
-def _fetch_group_nature(company_name: str, host: str, port: int) -> Dict[str, str]:
-    """Return a mapping of group name -> nature (Assets/Liabilities/Income/Expense)."""
-
-    xml_groups = f"""
-<ENVELOPE>
-  <HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>List of Groups</ID></HEADER>
-  <BODY>
-    <DESC>
-      <STATICVARIABLES>
-        <SVCURRENTCOMPANY>{company_name}</SVCURRENTCOMPANY>
-        <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
-      </STATICVARIABLES>
-      <TDL>
-        <TDLMESSAGE>
-          <COLLECTION NAME="List of Groups" ISMODIFY="No">
-            <TYPE>Group</TYPE>
-            <BELONGSTO>Yes</BELONGSTO>
-            <FETCH>Name</FETCH>
-            <FETCH>Parent</FETCH>
-            <FETCH>NatureOfGroup</FETCH>
-          </COLLECTION>
-        </TDLMESSAGE>
-      </TDL>
-    </DESC>
-  </BODY>
-</ENVELOPE>
-"""
-    raw_groups = _clean_tally_xml(_post_xml(xml_groups, host, port))
-    mapping: Dict[str, str] = {}
-    try:
-        root_groups = ET.fromstring(raw_groups)
-        for group in root_groups.findall(".//GROUP"):
-            name = (group.get("NAME") or group.findtext("NAME", "") or "").strip()
-            nature = (group.findtext("NATUREOFGROUP", "") or group.get("NATUREOFGROUP", "")).strip()
-            if name:
-                mapping[name] = nature
-    except ET.ParseError:
-        return {}
-    return mapping
+    return sorted(rows, key=lambda r: r["Ledger Name"].lower())
 
 
 def _parse_daybook(raw: str) -> Iterable[Voucher]:
