@@ -111,6 +111,24 @@ def _inject_theme():
                 box-shadow: var(--shadow);
                 padding: 16px;
             }
+
+            /* KPI buttons inside the overview */
+            .kpi-button button {
+                background: white;
+                border-radius: var(--card-radius);
+                border: 1px solid var(--grey-mid);
+                box-shadow: var(--shadow);
+                padding: 14px 16px;
+                color: var(--navy);
+                font-weight: 700;
+                font-size: 16px;
+                text-align: left;
+                white-space: pre-line;
+            }
+
+            .kpi-button button:hover {
+                border-color: var(--navy);
+            }
         </style>
         """,
         unsafe_allow_html=True,
@@ -212,6 +230,22 @@ def _render_kpi(label: str, value: float, accent: bool = False):
     )
 
 
+def _kpi_button(label: str, value: float, key: str):
+    """Clickable KPI-style button that preserves the card look."""
+
+    with st.container():
+        st.markdown("<div class='kpi-button'>", unsafe_allow_html=True)
+        clicked = st.button(
+            f"{label}\n₹{value:,.2f}",
+            key=key,
+            use_container_width=True,
+            type="secondary",
+            help="Click to view month-on-month trend",
+        )
+        st.markdown("</div>", unsafe_allow_html=True)
+    return clicked
+
+
 def _sum_t2clb(
     tb_df: pd.DataFrame,
     affects_gp: str,
@@ -288,7 +322,144 @@ def _sum_ytd_nett(
     return float(filtered["Nett YTD"].astype(float).sum())
 
 
-def _render_ytd_overview_cards(tb_df: pd.DataFrame, opening_stock: float, closing_stock: float):
+def _merge_vouchers_with_meta(voucher_df: pd.DataFrame, tb_df: pd.DataFrame) -> pd.DataFrame:
+    """Attach group/type metadata from the YTD trial balance to voucher rows."""
+
+    if voucher_df is None or voucher_df.empty or tb_df is None or tb_df.empty:
+        return pd.DataFrame()
+
+    meta = tb_df[[
+        "LedgerName",
+        "GroupName",
+        "AffectsGrossProfit",
+        "Type",
+    ]].rename(columns={
+        "LedgerName": "Ledger",
+    })
+
+    merged = voucher_df.copy()
+    merged["Date"] = pd.to_datetime(merged["Date"])
+    return merged.merge(meta, on="Ledger", how="left")
+
+
+def _monthly_series(
+    merged_df: pd.DataFrame,
+    affects_gp: str | None = None,
+    ledger_type: str | None = None,
+    exclude_groups: set[str] | None = None,
+    group_equals: str | None = None,
+    sign: float = 1.0,
+) -> pd.Series:
+    """Aggregate nett amounts by month using the merged voucher+metadata frame."""
+
+    if merged_df is None or merged_df.empty:
+        return pd.Series(dtype=float)
+
+    df = merged_df.copy()
+    if affects_gp is not None:
+        df = df[df["AffectsGrossProfit"].astype(str).str.lower() == affects_gp.lower()]
+    if ledger_type is not None:
+        df = df[df["Type"].astype(str).str.lower() == ledger_type.lower()]
+    if exclude_groups:
+        exclude_norm = {g.casefold() for g in exclude_groups}
+        df = df[~df["GroupName"].astype(str).str.casefold().isin(exclude_norm)]
+    if group_equals:
+        df = df[df["GroupName"].astype(str).str.casefold() == group_equals.casefold()]
+
+    if df.empty:
+        return pd.Series(dtype=float)
+
+    df["Month"] = df["Date"].dt.to_period("M").dt.to_timestamp()
+    series = df.groupby("Month")["Nett"].sum().sort_index()
+    return series * float(sign)
+
+
+def _monthly_cogs_series(
+    merged_df: pd.DataFrame, opening_stock: float, closing_stock: float
+) -> pd.Series:
+    """Compute month-wise COGS using Purchase Accounts plus stock adjustments."""
+
+    purchases = _monthly_series(
+        merged_df,
+        affects_gp=None,
+        ledger_type=None,
+        exclude_groups=None,
+        group_equals="Purchase Accounts",
+        sign=1.0,
+    )
+
+    if purchases.empty:
+        return purchases
+
+    months_sorted = purchases.index.sort_values()
+    first_month = months_sorted[0]
+    last_month = months_sorted[-1]
+
+    purchases.loc[first_month] += float(opening_stock or 0.0)
+    purchases.loc[last_month] -= float(closing_stock or 0.0)
+    return purchases
+
+
+def _combine_monthly_series(series_list: list[pd.Series]) -> pd.Series:
+    """Align and sum multiple monthly series."""
+
+    if not series_list:
+        return pd.Series(dtype=float)
+
+    index_union = pd.Index([])
+    for series in series_list:
+        index_union = index_union.union(series.index)
+
+    combined = pd.Series(0.0, index=index_union.sort_values())
+    for series in series_list:
+        combined.loc[series.index] += series
+    return combined
+
+
+def _build_kpi_monthly_series(
+    selected_key: str,
+    voucher_df: pd.DataFrame,
+    tb_df: pd.DataFrame,
+    opening_stock: float,
+    closing_stock: float,
+) -> pd.Series:
+    """Return month-wise amounts for the selected KPI."""
+
+    merged = _merge_vouchers_with_meta(voucher_df, tb_df)
+    if merged.empty:
+        return pd.Series(dtype=float)
+
+    revenue_series = _monthly_series(merged, affects_gp="yes", ledger_type="income", sign=-1)
+    direct_exp_series = _monthly_series(
+        merged,
+        affects_gp="yes",
+        ledger_type="expense",
+        exclude_groups={"Purchase Accounts"},
+    )
+    indirect_income_series = _monthly_series(merged, affects_gp="no", ledger_type="income", sign=-1)
+    indirect_exp_series = _monthly_series(merged, affects_gp="no", ledger_type="expense")
+    cogs_series = _monthly_cogs_series(merged, opening_stock, closing_stock)
+
+    if selected_key == "revenue":
+        return revenue_series
+    if selected_key == "direct_expense":
+        return direct_exp_series
+    if selected_key == "cogs":
+        return cogs_series
+    if selected_key == "gross_profit":
+        return _combine_monthly_series([revenue_series, -direct_exp_series, -cogs_series])
+    if selected_key == "indirect_income":
+        return indirect_income_series
+    if selected_key == "indirect_expense":
+        return indirect_exp_series
+    if selected_key == "net_profit":
+        gross = _combine_monthly_series([revenue_series, -direct_exp_series, -cogs_series])
+        return _combine_monthly_series([gross, indirect_income_series, -indirect_exp_series])
+
+    return pd.Series(dtype=float)
+
+
+def _render_ytd_overview_cards(tb_df: pd.DataFrame, opening_stock: float, closing_stock: float, voucher_df: pd.DataFrame):
     """Render revenue/expense/profit overview cards derived from the YTD trial balance."""
 
     revenue = -_sum_ytd_nett(tb_df, "yes", "income")
@@ -306,25 +477,78 @@ def _render_ytd_overview_cards(tb_df: pd.DataFrame, opening_stock: float, closin
     indirect_income = -_sum_ytd_nett(tb_df, "no", "income")
     net_profit = gross_profit + indirect_income - indirect_expense
 
-    cards = st.columns(3, gap="large")
-    with cards[0]:
-        _render_kpi("Revenue (Direct) YTD", revenue)
-    with cards[1]:
-        _render_kpi("Expense (Direct) YTD", direct_expense)
-    with cards[2]:
-        _render_kpi("COGS (YTD)", cogs)
+    selection_key = "ytd_selected_kpi"
+    selected = st.session_state.get(selection_key)
 
-    cards2 = st.columns(3, gap="large")
-    with cards2[0]:
-        _render_kpi("Gross Profit (YTD)", gross_profit)
-    with cards2[1]:
-        _render_kpi("Income (Indirect) YTD", indirect_income)
-    with cards2[2]:
-        _render_kpi("Expense (Indirect) YTD", indirect_expense)
+    card_specs = [
+        {
+            "key": "revenue",
+            "label": "Revenue (Direct) YTD",
+            "value": revenue,
+            "affects": "yes",
+            "type": "income",
+            "exclude": None,
+            "sign": -1.0,
+        },
+        {
+            "key": "direct_expense",
+            "label": "Expense (Direct) YTD",
+            "value": direct_expense,
+            "affects": "yes",
+            "type": "expense",
+            "exclude": {"Purchase Accounts"},
+            "sign": 1.0,
+        },
+        {
+            "key": "cogs",
+            "label": "COGS (YTD)",
+            "value": cogs,
+            "kind": "cogs",
+        },
+        {
+            "key": "gross_profit",
+            "label": "Gross Profit (YTD)",
+            "value": gross_profit,
+            "kind": "gross",
+        },
+        {
+            "key": "indirect_income",
+            "label": "Income (Indirect) YTD",
+            "value": indirect_income,
+            "affects": "no",
+            "type": "income",
+            "exclude": None,
+            "sign": -1.0,
+        },
+        {
+            "key": "indirect_expense",
+            "label": "Expense (Indirect) YTD",
+            "value": indirect_expense,
+            "affects": "no",
+            "type": "expense",
+            "exclude": None,
+            "sign": 1.0,
+        },
+        {
+            "key": "net_profit",
+            "label": "Net Profit (YTD)",
+            "value": net_profit,
+            "kind": "net",
+        },
+    ]
 
-    cards3 = st.columns(1)
-    with cards3[0]:
-        _render_kpi("Net Profit (YTD)", net_profit)
+    rows = [card_specs[:3], card_specs[3:6], card_specs[6:]]
+
+    for row in rows:
+        cols = st.columns(len(row), gap="large")
+        for col, spec in zip(cols, row):
+            with col:
+                clicked = _kpi_button(spec["label"], spec["value"], f"kpi-{spec['key']}")
+                if clicked:
+                    selected = spec["key"]
+                    st.session_state[selection_key] = selected
+
+    return selected
 
 
 def main() -> None:
@@ -515,7 +739,28 @@ def main() -> None:
             st.subheader("Performance Overview (YTD)")
             opening_stock_val = float(user_ob_input or 0.0)
             closing_stock_val = float(user_cb_input or 0.0)
-            _render_ytd_overview_cards(ytd_tb_df, opening_stock_val, closing_stock_val)
+            selected_kpi = _render_ytd_overview_cards(
+                ytd_tb_df, opening_stock_val, closing_stock_val, overview_vouchers
+            )
+
+            if selected_kpi:
+                monthly_series = _build_kpi_monthly_series(
+                    selected_kpi,
+                    overview_vouchers,
+                    ytd_tb_df,
+                    opening_stock_val,
+                    closing_stock_val,
+                )
+
+                st.markdown("<div style='margin-top:10px;'>", unsafe_allow_html=True)
+                if monthly_series.empty:
+                    st.info("No voucher data available to plot this KPI.")
+                else:
+                    chart_df = monthly_series.reset_index()
+                    chart_df.columns = ["Month", "Amount"]
+                    st.bar_chart(chart_df, x="Month", y="Amount")
+                st.markdown("</div>", unsafe_allow_html=True)
+
             st.markdown("</div>", unsafe_allow_html=True)
 
         st.markdown("<div class='app-shell'>", unsafe_allow_html=True)
