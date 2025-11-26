@@ -117,12 +117,12 @@ def fetch_ledgers(
 ) -> List[Dict[str, str | float]]:
     """Return chart-of-accounts ledgers with parent group and opening balance.
 
-    Parent (Under) values are pulled from the ledger master collection. Opening
-    balances come from the Trial Balance report to preserve Dr/Cr directions
-    seen inside Tally.
+    Parent (Under) values come from the ledger master collection (with TDL
+    fetches for parent + opening balance). Opening balances are refreshed from
+    the Trial Balance report to preserve Dr/Cr directions seen inside Tally.
     """
 
-    # Step 1: pull ledger masters for names and parent groups.
+    # Step 1: pull ledger masters for names, parent groups, and opening values.
     xml_basic = f"""
 <ENVELOPE>
   <HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>List of Ledgers</ID></HEADER>
@@ -139,6 +139,9 @@ def fetch_ledgers(
             <BELONGSTO>Yes</BELONGSTO>
             <FETCH>Name</FETCH>
             <FETCH>Parent</FETCH>
+            <FETCH>Parent Name</FETCH>
+            <FETCH>ParentName</FETCH>
+            <FETCH>OpeningBalance</FETCH>
           </COLLECTION>
         </TDLMESSAGE>
       </TDL>
@@ -148,20 +151,16 @@ def fetch_ledgers(
 """
     raw_basic = _clean_tally_xml(_post_xml(xml_basic, host, port))
     parent_map: Dict[str, str] = {}
+    master_opening: Dict[str, float] = {}
     try:
         root_basic = ET.fromstring(raw_basic)
         for ledger in root_basic.findall(".//LEDGER"):
             name = (ledger.get("NAME") or "").strip()
             if not name:
                 continue
-            parent = _first_non_empty(
-                [
-                    ledger.findtext("PARENT"),
-                    ledger.get("PARENT"),
-                    ledger.findtext(".//PARENT"),
-                ]
-            )
+            parent = _extract_parent(ledger)
             parent_map[name] = parent or "(Unknown)"
+            master_opening[name] = _to_float(ledger.findtext("OPENINGBALANCE"))
     except ET.ParseError:
         return []
 
@@ -179,6 +178,8 @@ def fetch_ledgers(
           <SVCURRENTCOMPANY>{company_name}</SVCURRENTCOMPANY>
           <SVFROMDATE>{fy_start}</SVFROMDATE>
           <SVTODATE>{today}</SVTODATE>
+          <ISDETAILED>Yes</ISDETAILED>
+          <EXPLODEFLAG>Yes</EXPLODEFLAG>
           <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
         </STATICVARIABLES>
       </REQUESTDESC>
@@ -196,6 +197,9 @@ def fetch_ledgers(
                 continue
             opening_val = _to_float(ledger.findtext("OPENINGBALANCE", "0"))
             opening_map[name.strip()] = round(opening_val, 2)
+            if name.strip() not in parent_map:
+                trial_parent = _extract_parent(ledger)
+                parent_map[name.strip()] = trial_parent or "(Unknown)"
     except ET.ParseError:
         pass
 
@@ -206,7 +210,7 @@ def fetch_ledgers(
             {
                 "Ledger Name": name,
                 "Under": parent,
-                "Opening Balance": opening_map.get(name, 0.0),
+                "Opening Balance": opening_map.get(name, master_opening.get(name, 0.0)),
             }
         )
 
@@ -308,6 +312,18 @@ def _to_float(value: str | None) -> float:
         else:
             value_flt = abs(value_flt)
     return value_flt
+
+
+def _extract_parent(node: ET.Element) -> str:
+    return _first_non_empty(
+        [
+            node.findtext("PARENT"),
+            node.get("PARENT"),
+            node.findtext("PARENTNAME"),
+            node.get("PARENTNAME"),
+            node.findtext(".//PARENT"),
+        ]
+    )
 
 
 def _first_non_empty(candidates):
