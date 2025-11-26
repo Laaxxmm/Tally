@@ -115,13 +115,14 @@ def fetch_ledgers(
     start: date | None = None,
     end: date | None = None,
 ) -> List[Dict[str, str | float]]:
-    """Return a simple chart-of-accounts ledger extract.
+    """Return chart-of-accounts ledgers with parent group and opening balance.
 
-    The extract mirrors Tally's ledger view: ledger name, parent (Under), and
-    opening balance. Date parameters are accepted for interface compatibility
-    but are not used because this is purely master data.
+    Parent (Under) values are pulled from the ledger master collection. Opening
+    balances come from the Trial Balance report to preserve Dr/Cr directions
+    seen inside Tally.
     """
 
+    # Step 1: pull ledger masters for names and parent groups.
     xml_basic = f"""
 <ENVELOPE>
   <HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>List of Ledgers</ID></HEADER>
@@ -138,7 +139,6 @@ def fetch_ledgers(
             <BELONGSTO>Yes</BELONGSTO>
             <FETCH>Name</FETCH>
             <FETCH>Parent</FETCH>
-            <FETCH>OpeningBalance</FETCH>
           </COLLECTION>
         </TDLMESSAGE>
       </TDL>
@@ -147,28 +147,78 @@ def fetch_ledgers(
 </ENVELOPE>
 """
     raw_basic = _clean_tally_xml(_post_xml(xml_basic, host, port))
-    rows: List[Dict[str, str | float]] = []
+    parent_map: Dict[str, str] = {}
     try:
         root_basic = ET.fromstring(raw_basic)
         for ledger in root_basic.findall(".//LEDGER"):
             name = (ledger.get("NAME") or "").strip()
             if not name:
                 continue
-            parent = (
-                ledger.findtext("PARENT", default="")
-                or ledger.get("PARENT", "")
-                or "(None)"
-            ).strip()
-            opening = round(_to_float(ledger.findtext("OPENINGBALANCE", "0")), 2)
+            parent = _first_non_empty(
+                [
+                    ledger.findtext("PARENT"),
+                    ledger.get("PARENT"),
+                    ledger.findtext(".//PARENT"),
+                ]
+            )
+            parent_map[name] = parent or "(Unknown)"
+    except ET.ParseError:
+        return []
+
+    # Step 2: pull opening balances from Trial Balance so Dr/Cr values match Tally.
+    today = (end or date.today()).strftime("%Y%m%d")
+    fy_start = _fiscal_year_start(end or date.today()).strftime("%Y%m%d")
+    xml_trial = f"""
+<ENVELOPE>
+  <HEADER><TALLYREQUEST>Export Data</TALLYREQUEST></HEADER>
+  <BODY>
+    <EXPORTDATA>
+      <REQUESTDESC>
+        <REPORTNAME>Trial Balance</REPORTNAME>
+        <STATICVARIABLES>
+          <SVCURRENTCOMPANY>{company_name}</SVCURRENTCOMPANY>
+          <SVFROMDATE>{fy_start}</SVFROMDATE>
+          <SVTODATE>{today}</SVTODATE>
+          <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+        </STATICVARIABLES>
+      </REQUESTDESC>
+    </EXPORTDATA>
+  </BODY>
+</ENVELOPE>
+"""
+    opening_map: Dict[str, float] = {}
+    try:
+        raw_trial = _clean_tally_xml(_post_xml(xml_trial, host, port))
+        root_trial = ET.fromstring(raw_trial)
+        for ledger in root_trial.findall(".//LEDGER"):
+            name = _first_non_empty([ledger.get("NAME"), ledger.findtext("NAME")])
+            if not name:
+                continue
+            opening_val = _to_float(ledger.findtext("OPENINGBALANCE", "0"))
+            opening_map[name.strip()] = round(opening_val, 2)
+    except ET.ParseError:
+        pass
+
+    # Step 3: combine parents + openings and return sorted rows.
+    rows: List[Dict[str, str | float]] = []
+    for name, parent in parent_map.items():
+        rows.append(
+            {
+                "Ledger Name": name,
+                "Under": parent,
+                "Opening Balance": opening_map.get(name, 0.0),
+            }
+        )
+
+    for name, opening in opening_map.items():
+        if name not in parent_map:
             rows.append(
                 {
                     "Ledger Name": name,
-                    "Under": parent,
+                    "Under": "(Unknown)",
                     "Opening Balance": opening,
                 }
             )
-    except ET.ParseError:
-        return []
 
     return sorted(rows, key=lambda r: r["Ledger Name"].lower())
 
@@ -258,6 +308,21 @@ def _to_float(value: str | None) -> float:
         else:
             value_flt = abs(value_flt)
     return value_flt
+
+
+def _first_non_empty(candidates):
+    for candidate in candidates:
+        cleaned = (candidate or "").strip()
+        if cleaned:
+            return cleaned
+    return ""
+
+
+def _fiscal_year_start(anchor: date) -> date:
+    """Return an April 1 fiscal-year start for the given anchor date."""
+
+    year = anchor.year if anchor.month >= 4 else anchor.year - 1
+    return date(year, 4, 1)
 
 
 def _extract_voucher_type(voucher: ET.Element) -> str:

@@ -5,7 +5,7 @@ A lightweight Streamlit dashboard that connects to a running Tally instance (via
 ## Features
 - Connects to Tally over the XML/HTTP interface (`http://127.0.0.1:9000` when Tally is open in the background).
 - Pulls Day Book entries for a selectable date range, including Sales/Purchase vouchers that post amounts via inventory lines.
-- Exports the chart-of-accounts ledger list (Name, Under, Opening Balance) as a CSV download without displaying it in the UI.
+- Exports the chart-of-accounts ledger list (Name, Under, Opening Balance) as a CSV download without displaying it in the UI, using Trial Balance data so Dr/Cr opening values match what Tally shows.
 - Aggregates ledgers into Revenue, Cost of Goods Sold, Expenses, Assets, and Liabilities with heuristics to keep numbers accurate.
 - Displays KPIs, balance snapshot, top products/services, and a searchable voucher grid (with debit/credit/nett columns that should sum to zero) for quick investigation.
 
