@@ -136,7 +136,7 @@ def _inject_theme():
                 border: 1px solid var(--navy);
                 box-shadow: var(--shadow);
                 padding: 14px 16px;
-                color: white;
+                color: white !important;
                 font-weight: 700;
                 font-size: 16px;
                 text-align: left;
