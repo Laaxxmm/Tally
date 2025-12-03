@@ -241,10 +241,11 @@ def main():
         unsafe_allow_html=True
     )
 
-    # Date Filter (Mock for now, can be connected to DB queries)
+    # Date Filter
     col_filter1, col_filter2, _ = st.columns([2, 2, 6])
     with col_filter1:
-        year = st.selectbox("Year", [2023, 2024], index=1)
+        available_years = db.get_available_years()
+        year = st.selectbox("Year", available_years, index=0)
     
     # Fetch Data
     # For demo, using full year range

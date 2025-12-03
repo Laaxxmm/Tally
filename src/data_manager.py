@@ -10,6 +10,7 @@ class DataManager:
 
     def init_db(self):
         """Initialize the SQLite database schema."""
+        print(f"Initializing DB at {self.db_path}")
         conn = sqlite3.connect(self.db_path)
         c = conn.cursor()
         
@@ -183,3 +184,16 @@ class DataManager:
             df['total'] = df['total'].abs()
             
         return df
+
+    def get_available_years(self):
+        """Get list of years present in the vouchers table."""
+        conn = sqlite3.connect(self.db_path)
+        try:
+            query = "SELECT DISTINCT strftime('%Y', date) as year FROM vouchers ORDER BY year DESC"
+            df = pd.read_sql_query(query, conn)
+            years = df['year'].astype(int).tolist()
+            return years if years else [datetime.now().year]
+        except:
+            return [datetime.now().year]
+        finally:
+            conn.close()
