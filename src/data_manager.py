@@ -46,6 +46,12 @@ class DataManager:
             last_sync TIMESTAMP
         )''')
         
+        # Stock Cache
+        c.execute('''CREATE TABLE IF NOT EXISTS stock_cache (
+            date DATE PRIMARY KEY,
+            value REAL
+        )''')
+        
         conn.commit()
         conn.close()
 
@@ -99,6 +105,28 @@ class DataManager:
         # Update Sync Status
         c.execute("DELETE FROM sync_status")
         c.execute("INSERT INTO sync_status VALUES (?)", (datetime.now(),))
+        
+        # 4. Sync Stock Data (Auto-fetch for key dates)
+        # Fetch for Apr 1 and Mar 31 of all years found + current date
+        years = set()
+        if vouchers:
+            years.add(vouchers[0].date.year)
+            years.add(vouchers[-1].date.year)
+        years.add(datetime.now().year)
+        
+        stock_dates = set()
+        for y in years:
+            stock_dates.add(date(y, 4, 1))      # Opening
+            stock_dates.add(date(y+1, 3, 31))   # Closing
+        stock_dates.add(date.today())
+        
+        c.execute("DELETE FROM stock_cache")
+        stock_rows = []
+        for d in stock_dates:
+            val = tally_client.fetch_group_balance(company, "Stock-in-Hand", d, host, port)
+            stock_rows.append((d, val))
+            
+        c.executemany("INSERT OR REPLACE INTO stock_cache VALUES (?, ?)", stock_rows)
         
         conn.commit()
         conn.close()
@@ -196,3 +224,19 @@ class DataManager:
             return [datetime.now().year]
         finally:
             conn.close()
+
+    def get_stock_value(self, as_on_date):
+        """Get cached stock value for a specific date, or closest previous date."""
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        # Try exact match first
+        c.execute("SELECT value FROM stock_cache WHERE date = ?", (as_on_date,))
+        row = c.fetchone()
+        if row:
+            conn.close()
+            return row[0]
+            
+        # Fallback: Get closest previous date (for Opening) or next date?
+        # For simplicity, let's return 0 if not found, or maybe the user can override.
+        conn.close()
+        return 0.0

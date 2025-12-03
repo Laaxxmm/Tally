@@ -45,6 +45,7 @@ __all__ = [
     "export_ledger_opening_excel",
     "export_group_master_excel",
     "_fiscal_year_start",
+    "fetch_group_balance",
 ]
 
 
@@ -712,4 +713,66 @@ def _extract_voucher_type(voucher: ET.Element) -> str:
             return cleaned
 
     return "(Unknown)"
+
+
+def fetch_group_balance(
+    company_name: str,
+    group_name: str,
+    as_on_date: date,
+    host: str = "127.0.0.1",
+    port: int = 9000,
+) -> float:
+    """Fetch the closing balance of a specific group on a given date."""
+    date_str = as_on_date.strftime("%Y%m%d")
+    
+    xml = f"""<ENVELOPE>
+  <HEADER>
+    <VERSION>1</VERSION>
+    <TALLYREQUEST>Export</TALLYREQUEST>
+    <TYPE>Collection</TYPE>
+    <ID>GroupBalanceColl</ID>
+  </HEADER>
+  <BODY>
+    <DESC>
+      <STATICVARIABLES>
+        <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+        <SVFROMDATE>{date_str}</SVFROMDATE>
+        <SVTODATE>{date_str}</SVTODATE>
+      </STATICVARIABLES>
+      <TDL>
+        <TDLMESSAGE>
+          <COLLECTION NAME="GroupBalanceColl">
+            <TYPE>Group</TYPE>
+            <FILTERS>TargetGroup</FILTERS>
+            <FETCH>Name, ClosingBalance</FETCH>
+          </COLLECTION>
+          <SYSTEM TYPE="Formulae" NAME="TargetGroup">
+             $Name = "{group_name}"
+          </SYSTEM>
+        </TDLMESSAGE>
+      </TDL>
+    </DESC>
+  </BODY>
+</ENVELOPE>"""
+
+    raw = _clean_tally_xml(_post_xml(xml, host, port))
+    if not raw:
+        return 0.0
+        
+    try:
+        root = ET.fromstring(raw)
+        # Look for the group object
+        group = root.find(".//GROUP")
+        if group is not None:
+            bal_str = group.get("CLOSINGBALANCE", "0")
+            # Tally returns negative for Credit, Positive for Debit usually.
+            # For Stock-in-Hand, it's an asset, so debit is positive.
+            # However, Tally XML might return it as signed.
+            # We'll take the absolute value for stock as it can't be negative physically.
+            return abs(float(bal_str))
+            
+        return 0.0
+    except Exception as e:
+        print(f"Error fetching stock: {e}")
+        return 0.0
 

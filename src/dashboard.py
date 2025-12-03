@@ -232,10 +232,7 @@ def main():
         if last_sync:
             st.caption(f"Last updated: {last_sync}")
             
-        st.markdown("---")
-        st.markdown("### Stock Adjustments")
-        opening_stock = st.number_input("Opening Stock", min_value=0.0, value=0.0, step=1000.0)
-        closing_stock = st.number_input("Closing Stock", min_value=0.0, value=0.0, step=1000.0)
+
 
     # Main Content - Custom Header
     header_col, filter_col = st.columns([3, 1])
@@ -264,15 +261,27 @@ def main():
         available_years = db.get_available_years()
         # Use a container to align the selectbox nicely
         with st.container():
-            year = st.selectbox("Fiscal Year", available_years, index=0, label_visibility="collapsed")
+            year = st.selectbox("Fiscal Year", available_years, index=0, label_visibility="collapsed", key="selected_year")
     
     st.markdown("<br>", unsafe_allow_html=True)
     
-    # Fetch Data
-    # For demo, using full year range
+    # Stock Adjustments (Auto-fetched with override)
     start_date = f"{year}-04-01"
     end_date = f"{year+1}-03-31"
     
+    # Fetch cached values
+    auto_op_stock = db.get_stock_value(start_date)
+    auto_cl_stock = db.get_stock_value(end_date)
+    
+    with st.expander("Stock Adjustments (COGS Calculation)", expanded=False):
+        st.caption(f"Values auto-fetched for {start_date} and {end_date}. You can override them below.")
+        s_col1, s_col2 = st.columns(2)
+        with s_col1:
+            opening_stock = st.number_input("Opening Stock", min_value=0.0, value=float(auto_op_stock), step=1000.0, key=f"op_{year}")
+        with s_col2:
+            closing_stock = st.number_input("Closing Stock", min_value=0.0, value=float(auto_cl_stock), step=1000.0, key=f"cl_{year}")
+
+    # Fetch Data
     data = db.get_kpi_data(start_date, end_date, opening_stock, closing_stock)
     
     # Top Row: KPIs
