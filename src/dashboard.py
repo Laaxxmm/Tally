@@ -274,7 +274,6 @@ def main():
     col_mid1, col_mid2 = st.columns([3, 1])
     
     with col_mid1:
-        st.markdown('<div class="app-shell">', unsafe_allow_html=True)
         st.subheader("Revenue vs Expenses Trend")
         
         rev_trend = db.get_monthly_trend("revenue", year)
@@ -301,16 +300,15 @@ def main():
             plot_bgcolor='rgba(0,0,0,0)',
             paper_bgcolor='rgba(0,0,0,0)',
             xaxis=dict(showgrid=False),
-            yaxis=dict(showgrid=True, gridcolor='#f3f4f6'),
+            yaxis=dict(showgrid=True, gridcolor='#e5e7eb'),
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-            height=300,
+            height=350,
             margin=dict(l=0, r=0, t=0, b=0)
         )
         st.plotly_chart(fig, use_container_width=True)
-        st.markdown('</div>', unsafe_allow_html=True)
 
     with col_mid2:
-        st.markdown('<div class="app-shell">', unsafe_allow_html=True)
+        st.subheader("Margins")
         
         gp_margin = (data['gross_profit'] / data['revenue'] * 100) if data['revenue'] else 0
         np_margin = (data['net_profit'] / data['revenue'] * 100) if data['revenue'] else 0
@@ -321,15 +319,13 @@ def main():
         render_gauge("Net Margin", np_margin, 100, "#3b82f6")
         st.markdown("<br>", unsafe_allow_html=True)
         render_gauge("Opex Ratio", opex_ratio, 100, "#f59e0b")
-        
-        st.markdown('</div>', unsafe_allow_html=True)
 
     # Bottom Row: Insights
-    st.markdown('<div class="app-shell">', unsafe_allow_html=True)
+    st.markdown("---")
     st.subheader("Smart Insights")
     st.markdown(
         """
-        <div style="color: #4b5563; font-size: 14px; line-height: 1.6;">
+        <div style="color: #4b5563; font-size: 14px; line-height: 1.6; background: white; padding: 20px; border-radius: 12px; border: 1px solid #e5e7eb;">
         • <strong>Revenue</strong> has shown a consistent upward trend over the last quarter, peaking in March.<br>
         • <strong>COGS</strong> decreased by 5.2% compared to the benchmark, indicating better cost efficiency.<br>
         • <strong>Net Profit Margin</strong> is healthy at 15.8%, driven by controlled operating expenses.<br>
@@ -338,7 +334,6 @@ def main():
         """,
         unsafe_allow_html=True
     )
-    st.markdown('</div>', unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
