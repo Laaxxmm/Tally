@@ -54,75 +54,48 @@ def _inject_theme():
                 border: 1px solid #e5e7eb;
             }
 
+            /* Hide default Streamlit header */
+            header {visibility: hidden;}
+            
+            /* Custom Top Bar */
+            .top-bar {
+                background: white;
+                padding: 16px 24px;
+                border-bottom: 1px solid #e5e7eb;
+                margin: -6rem -5rem 2rem -5rem; /* Negative margin to span full width */
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+            }
+
             /* Header Styling */
+            .header-container {
+                display: flex;
+                align-items: center;
+                gap: 12px;
+            }
+            
+            .header-icon {
+                background: #1e293b;
+                padding: 10px;
+                border-radius: 8px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+            }
+            
             .header-title {
-                font-size: 24px;
+                font-size: 20px;
                 font-weight: 700;
                 color: var(--text-primary);
-                margin-bottom: 4px;
+                line-height: 1.2;
             }
             
             .header-subtitle {
-                font-size: 14px;
+                font-size: 13px;
                 color: var(--text-secondary);
+                font-weight: 400;
             }
-
-            /* Metric Cards */
-            .metric-container {
-                background: white;
-                padding: 20px;
-                border-radius: 12px;
-                box-shadow: var(--shadow-sm);
-                border: 1px solid #f3f4f6;
-                text-align: center;
-                transition: transform 0.2s;
-            }
-            
-            .metric-container:hover {
-                transform: translateY(-2px);
-                box-shadow: var(--shadow-md);
-            }
-
-            .metric-label {
-                color: var(--text-secondary);
-                font-size: 14px;
-                font-weight: 500;
-                margin-bottom: 8px;
-            }
-
-            .metric-value {
-                color: var(--text-primary);
-                font-size: 28px;
-                font-weight: 700;
-                margin-bottom: 4px;
-            }
-            
-            .metric-delta {
-                font-size: 12px;
-                font-weight: 600;
-            }
-            
-            .delta-pos { color: var(--accent-success); }
-            .delta-neg { color: var(--accent-danger); }
-
-            /* Sidebar */
-            [data-testid="stSidebar"] {
-                background-color: white;
-                border-right: 1px solid #e5e7eb;
-            }
-            
-            /* Buttons */
-            .stButton > button {
-                border-radius: 8px;
-                font-weight: 500;
-            }
-            
-            .stButton > button[kind="primary"] {
-                background-color: var(--accent-primary);
-                color: white;
-                border: none;
-            }
-
         </style>
         """,
         unsafe_allow_html=True,
@@ -221,31 +194,36 @@ def main():
         if last_sync:
             st.caption(f"Last updated: {last_sync}")
 
-    # Main Content
-    st.markdown(
-        """
-        <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 24px;">
-            <div style="background: #1e293b; padding: 10px; border-radius: 8px;">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2">
-                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
-                    <line x1="12" y1="8" x2="12" y2="16"></line>
-                    <line x1="8" y1="12" x2="16" y2="12"></line>
-                </svg>
+    # Main Content - Custom Header
+    header_col, filter_col = st.columns([3, 1])
+    
+    with header_col:
+        st.markdown(
+            """
+            <div class="header-container">
+                <div class="header-icon">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2">
+                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                        <line x1="12" y1="8" x2="12" y2="16"></line>
+                        <line x1="8" y1="12" x2="16" y2="12"></line>
+                    </svg>
+                </div>
+                <div>
+                    <div class="header-title">Financial Overview</div>
+                    <div class="header-subtitle">Real-time insights and performance metrics</div>
+                </div>
             </div>
-            <div>
-                <div class="header-title">Financial Overview</div>
-                <div class="header-subtitle">Real-time insights and performance metrics</div>
-            </div>
-        </div>
-        """, 
-        unsafe_allow_html=True
-    )
-
-    # Date Filter
-    col_filter1, col_filter2, _ = st.columns([2, 2, 6])
-    with col_filter1:
+            """, 
+            unsafe_allow_html=True
+        )
+        
+    with filter_col:
         available_years = db.get_available_years()
-        year = st.selectbox("Year", available_years, index=0)
+        # Use a container to align the selectbox nicely
+        with st.container():
+            year = st.selectbox("Fiscal Year", available_years, index=0, label_visibility="collapsed")
+    
+    st.markdown("<br>", unsafe_allow_html=True)
     
     # Fetch Data
     # For demo, using full year range
