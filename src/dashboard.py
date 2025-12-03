@@ -96,6 +96,44 @@ def _inject_theme():
                 color: var(--text-secondary);
                 font-weight: 400;
             }
+
+            /* Metric Cards */
+            .metric-container {
+                background: white;
+                padding: 20px;
+                border-radius: 12px;
+                box-shadow: var(--shadow-sm);
+                border: 1px solid #f3f4f6;
+                text-align: center;
+                transition: transform 0.2s;
+            }
+            
+            .metric-container:hover {
+                transform: translateY(-2px);
+                box-shadow: var(--shadow-md);
+            }
+
+            .metric-label {
+                color: var(--text-secondary);
+                font-size: 14px;
+                font-weight: 500;
+                margin-bottom: 8px;
+            }
+
+            .metric-value {
+                color: var(--text-primary);
+                font-size: 28px;
+                font-weight: 700;
+                margin-bottom: 4px;
+            }
+            
+            .metric-delta {
+                font-size: 12px;
+                font-weight: 600;
+            }
+            
+            .delta-pos { color: var(--accent-success); }
+            .delta-neg { color: var(--accent-danger); }
         </style>
         """,
         unsafe_allow_html=True,
