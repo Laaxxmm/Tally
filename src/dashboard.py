@@ -54,8 +54,13 @@ def _inject_theme():
                 border: 1px solid #e5e7eb;
             }
 
-            /* Hide default Streamlit header */
+            /* Hide default Streamlit header but keep sidebar toggle */
             header {visibility: hidden;}
+            [data-testid="stSidebarCollapsedControl"] {
+                visibility: visible;
+                display: block;
+                color: var(--text-primary);
+            }
             
             /* Custom Top Bar */
             .top-bar {
