@@ -231,6 +231,11 @@ def main():
         last_sync = db.get_last_sync()
         if last_sync:
             st.caption(f"Last updated: {last_sync}")
+            
+        st.markdown("---")
+        st.markdown("### Stock Adjustments")
+        opening_stock = st.number_input("Opening Stock", min_value=0.0, value=0.0, step=1000.0)
+        closing_stock = st.number_input("Closing Stock", min_value=0.0, value=0.0, step=1000.0)
 
     # Main Content - Custom Header
     header_col, filter_col = st.columns([3, 1])
@@ -268,7 +273,7 @@ def main():
     start_date = f"{year}-04-01"
     end_date = f"{year+1}-03-31"
     
-    data = db.get_kpi_data(start_date, end_date)
+    data = db.get_kpi_data(start_date, end_date, opening_stock, closing_stock)
     
     # Top Row: KPIs
     kpi_cols = st.columns(4)

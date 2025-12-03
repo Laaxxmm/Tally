@@ -103,7 +103,7 @@ class DataManager:
         conn.commit()
         conn.close()
 
-    def get_kpi_data(self, start_date, end_date):
+    def get_kpi_data(self, start_date, end_date, opening_stock=0.0, closing_stock=0.0):
         """Get aggregated KPI data for the given period."""
         conn = sqlite3.connect(self.db_path)
         
@@ -128,9 +128,8 @@ class DataManager:
         revenue = abs(df[(df['type'] == 'Income') & (df['affects_gp'] == 'Yes')]['total'].sum())
         direct_expense = df[(df['type'] == 'Expense') & (df['affects_gp'] == 'Yes')]['total'].sum()
         
-        # COGS logic might need specific group filtering (e.g. "Purchase Accounts")
-        # For now, using Direct Expenses as proxy for COGS components excluding stock
-        cogs = direct_expense 
+        # COGS = Opening Stock + Direct Expenses (Purchases) - Closing Stock
+        cogs = opening_stock + direct_expense - closing_stock
         
         gross_profit = revenue - cogs
         
