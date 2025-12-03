@@ -40,4 +40,3 @@ The group master extract leans on Tally's own flags (see `tally_client.classify_
 
 ## Security note
 The dashboard trusts the Tally instance it connects to. Run it on a secure network and avoid exposing the Tally port publicly.
-
