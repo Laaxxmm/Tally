@@ -269,56 +269,57 @@ def main():
             sparkline = db.get_monthly_trend(kpi_type, year) if kpi_type else None
             render_kpi_card(label, val, delta, sparkline, key=f"kpi_{label}")
 
-    # Middle Row: Margins & Charts
+    # Row 2: Margins (Horizontal)
     st.markdown("<br>", unsafe_allow_html=True)
-    col_mid1, col_mid2 = st.columns([3, 1])
+    st.subheader("Profitability Ratios")
     
-    with col_mid1:
-        st.subheader("Revenue vs Expenses Trend")
-        
-        rev_trend = db.get_monthly_trend("revenue", year)
-        exp_trend = db.get_monthly_trend("opex", year)
-        
-        fig = go.Figure()
-        fig.add_trace(go.Bar(
-            x=rev_trend['month'], 
-            y=rev_trend['total'], 
-            name='Revenue',
-            marker_color='#3b82f6',
-            opacity=0.8
-        ))
-        fig.add_trace(go.Bar(
-            x=exp_trend['month'], 
-            y=exp_trend['total'], 
-            name='Expenses',
-            marker_color='#ef4444',
-            opacity=0.8
-        ))
-        
-        fig.update_layout(
-            barmode='group',
-            plot_bgcolor='rgba(0,0,0,0)',
-            paper_bgcolor='rgba(0,0,0,0)',
-            xaxis=dict(showgrid=False),
-            yaxis=dict(showgrid=True, gridcolor='#e5e7eb'),
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-            height=350,
-            margin=dict(l=0, r=0, t=0, b=0)
-        )
-        st.plotly_chart(fig, use_container_width=True)
-
-    with col_mid2:
-        st.subheader("Margins")
-        
-        gp_margin = (data['gross_profit'] / data['revenue'] * 100) if data['revenue'] else 0
-        np_margin = (data['net_profit'] / data['revenue'] * 100) if data['revenue'] else 0
-        opex_ratio = (data['opex'] / data['revenue'] * 100) if data['revenue'] else 0
-        
+    m_col1, m_col2, m_col3 = st.columns(3)
+    
+    gp_margin = (data['gross_profit'] / data['revenue'] * 100) if data['revenue'] else 0
+    np_margin = (data['net_profit'] / data['revenue'] * 100) if data['revenue'] else 0
+    opex_ratio = (data['opex'] / data['revenue'] * 100) if data['revenue'] else 0
+    
+    with m_col1:
         render_gauge("Gross Margin", gp_margin, 100, "#10b981")
-        st.markdown("<br>", unsafe_allow_html=True)
+    with m_col2:
         render_gauge("Net Margin", np_margin, 100, "#3b82f6")
-        st.markdown("<br>", unsafe_allow_html=True)
+    with m_col3:
         render_gauge("Opex Ratio", opex_ratio, 100, "#f59e0b")
+
+    # Row 3: Charts
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.subheader("Revenue vs Expenses Trend")
+    
+    rev_trend = db.get_monthly_trend("revenue", year)
+    exp_trend = db.get_monthly_trend("opex", year)
+    
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=rev_trend['month'], 
+        y=rev_trend['total'], 
+        name='Revenue',
+        marker_color='#3b82f6',
+        opacity=0.8
+    ))
+    fig.add_trace(go.Bar(
+        x=exp_trend['month'], 
+        y=exp_trend['total'], 
+        name='Expenses',
+        marker_color='#ef4444',
+        opacity=0.8
+    ))
+    
+    fig.update_layout(
+        barmode='group',
+        plot_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor='rgba(0,0,0,0)',
+        xaxis=dict(showgrid=False),
+        yaxis=dict(showgrid=True, gridcolor='#e5e7eb'),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        height=350,
+        margin=dict(l=0, r=0, t=0, b=0)
+    )
+    st.plotly_chart(fig, use_container_width=True)
 
     # Bottom Row: Insights
     st.markdown("---")
